@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Glori Budget Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand">
+        <div class="brand-logo-wrap">
+          <img src="images/Logo.png" alt="Glori Logo" class="logo" onerror="this.style.display='none';this.parentNode.innerHTML='<span class=\'brand-fallback\'>GB</span>'">
+        </div>
+        <div>
+          <h1>Glori Budget Manager</h1>
+          <p class="brand-sub">Local Excel version</p>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button id="downloadExcelBtn" class="btn btn-light" type="button">Download Excel</button>
+        <button id="resetBtn" class="btn btn-light" type="button">Clear Form</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container page">
+    <section class="card hero-card">
+      <div class="hero-copy">
+        <h2>Manage projects, budget, spending and balance in one place.</h2>
+        <p>Auto project code, save to Excel, edit records, track progress and search quickly.</p>
+      </div>
+
+      <div class="kpi-grid" id="summaryCards">
+        <article class="kpi-card">
+          <div class="kpi-label">Total Projects</div>
+          <div class="kpi-value" id="kpiProjects">0</div>
+        </article>
+        <article class="kpi-card">
+          <div class="kpi-label">Total Budget</div>
+          <div class="kpi-value" id="kpiBudget">0</div>
+        </article>
+        <article class="kpi-card">
+          <div class="kpi-label">Total Spent</div>
+          <div class="kpi-value" id="kpiSpent">0</div>
+        </article>
+        <article class="kpi-card success">
+          <div class="kpi-label">Balance</div>
+          <div class="kpi-value" id="kpiBalance">0</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h3 id="formTitle">Add Budget Project</h3>
+        <p>Project Code is auto generated, but you can still type your own code if needed.</p>
+      </div>
+
+      <form id="projectForm">
+        <input type="hidden" id="editId" />
+
+        <div class="form-grid">
+          <div class="field">
+            <label for="projectCode">Project Code</label>
+            <input id="projectCode" name="projectCode" type="text" placeholder="GB-0001" />
+          </div>
+
+          <div class="field">
+            <label for="status">Status</label>
+            <select id="status" name="status">
+              <option value="Planned">Planned</option>
+              <option value="In Progress">In Progress</option>
+              <option value="On Hold">On Hold</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="field full">
+            <label for="projectName">Project Name</label>
+            <input id="projectName" name="projectName" type="text" placeholder="Enter project name" required />
+          </div>
+
+          <div class="field">
+            <label for="department">Department</label>
+            <input id="department" name="department" type="text" list="departmentSuggestions" placeholder="Type or select department" required />
+            <datalist id="departmentSuggestions"></datalist>
+          </div>
+
+          <div class="field">
+            <label for="budgetCategory">Budget Category</label>
+            <input id="budgetCategory" name="budgetCategory" type="text" list="categorySuggestions" placeholder="Type or select category" required />
+            <datalist id="categorySuggestions"></datalist>
+          </div>
+
+          <div class="field">
+            <label for="owner">Responsible</label>
+            <input id="owner" name="owner" type="text" list="ownerSuggestions" placeholder="Type or select responsible" />
+            <datalist id="ownerSuggestions"></datalist>
+          </div>
+
+          <div class="field">
+            <label for="priority">Priority</label>
+            <select id="priority" name="priority">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+              <option value="Urgent">Urgent</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="budgetAmount">Budget Amount</label>
+            <input id="budgetAmount" name="budgetAmount" type="text" inputmode="decimal" placeholder="0" required />
+          </div>
+
+          <div class="field">
+            <label for="spentAmount">Spent Amount</label>
+            <input id="spentAmount" name="spentAmount" type="text" inputmode="decimal" placeholder="0" />
+          </div>
+
+          <div class="field">
+            <label for="startDate">Start Date</label>
+            <input id="startDate" name="startDate" type="date" />
+          </div>
+
+          <div class="field">
+            <label for="endDate">End Date</label>
+            <input id="endDate" name="endDate" type="date" />
+          </div>
+
+          <div class="field full">
+            <label for="remark">Remark</label>
+            <textarea id="remark" name="remark" placeholder="Remark or note"></textarea>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button id="saveBtn" class="btn btn-primary" type="submit">Save Project</button>
+          <button id="cancelEditBtn" class="btn btn-light hidden" type="button">Cancel Edit</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="section-head row-between">
+        <div>
+          <h3>Project List</h3>
+          <p id="resultCount">0 projects</p>
+        </div>
+      </div>
+
+      <div class="filter-grid">
+        <div class="field">
+          <label for="searchInput">Search</label>
+          <input id="searchInput" type="text" placeholder="Search project code, name, department, owner..." />
+        </div>
+
+        <div class="field">
+          <label for="filterStatus">Filter Status</label>
+          <select id="filterStatus">
+            <option value="">All Status</option>
+            <option value="Planned">Planned</option>
+            <option value="In Progress">In Progress</option>
+            <option value="On Hold">On Hold</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="filterDepartment">Filter Department</label>
+          <select id="filterDepartment">
+            <option value="">All Departments</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="sortBy">Sort By</label>
+          <select id="sortBy">
+            <option value="newest">Newest</option>
+            <option value="budget-desc">Budget High to Low</option>
+            <option value="budget-asc">Budget Low to High</option>
+            <option value="balance-desc">Balance High to Low</option>
+            <option value="name-asc">Project Name A-Z</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="projectList" class="cards-grid"></div>
+    </section>
+  </main>
+
+  <template id="projectCardTemplate">
+    <article class="project-card">
+      <div class="card-top">
+        <div>
+          <div class="project-code"></div>
+          <h4 class="project-title"></h4>
+        </div>
+        <span class="status-pill"></span>
+      </div>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <span class="meta-label">Department</span>
+          <strong class="project-department"></strong>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Category</span>
+          <strong class="project-category"></strong>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Responsible</span>
+          <strong class="project-owner"></strong>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Priority</span>
+          <strong class="project-priority"></strong>
+        </div>
+      </div>
+
+      <div class="money-grid">
+        <div class="money-box">
+          <span>Budget</span>
+          <strong class="project-budget"></strong>
+        </div>
+        <div class="money-box warn">
+          <span>Spent</span>
+          <strong class="project-spent"></strong>
+        </div>
+        <div class="money-box success">
+          <span>Balance</span>
+          <strong class="project-balance"></strong>
+        </div>
+      </div>
+
+      <div class="date-row">
+        <span class="project-start"></span>
+        <span class="project-end"></span>
+      </div>
+
+      <p class="project-remark"></p>
+
+      <div class="card-actions">
+        <button class="btn btn-light btn-edit" type="button">Edit</button>
+        <button class="btn btn-danger btn-delete" type="button">Delete</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>
