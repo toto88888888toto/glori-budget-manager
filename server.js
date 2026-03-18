@@ -32,14 +32,21 @@ app.use(
     secret: process.env.SESSION_SECRET || 'glori_secret_2026',
     resave: false,
     saveUninitialized: false,
+    proxy: true,
     cookie: {
       httpOnly: true,
-      secure: false, // change to true only if you fully enable HTTPS session handling
+      secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 8
     }
   })
 );
+
+// Request log
+app.use((req, res, next) => {
+  console.log(new Date().toISOString(), req.method, req.url);
+  next();
+});
 
 const USERS = [
   {
@@ -83,6 +90,7 @@ app.post('/api/login', async (req, res) => {
 
 app.post('/api/logout', requireAuth, (req, res) => {
   req.session.destroy(() => {
+    res.clearCookie('connect.sid');
     res.json({ ok: true });
   });
 });
@@ -95,7 +103,11 @@ app.get('/api/me', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use(express.static(PUBLIC_DIR));
@@ -469,13 +481,27 @@ function sendError(res, message, status = 500) {
   return res.status(status).json({ ok: false, error: message });
 }
 
+app.get('/', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+});
+
+app.get('/index.html', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
+app.get('/login.html', (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+});
+
 app.get('/api/projects', requireAuth, async (req, res) => {
+  const started = Date.now();
   try {
     const { projects, transactions } = await getAllData();
     const items = projects
       .map((project) => buildProjectSummary(project, transactions))
       .sort((a, b) => toNumber(b.no) - toNumber(a.no));
 
+    console.log('/api/projects took', Date.now() - started, 'ms');
     res.json(items);
   } catch (error) {
     console.error('Cannot read projects:', error);
@@ -484,11 +510,13 @@ app.get('/api/projects', requireAuth, async (req, res) => {
 });
 
 app.get('/api/projects/:id', requireAuth, async (req, res) => {
+  const started = Date.now();
   try {
     const { projects, transactions } = await getAllData();
     const project = projects.find((item) => item.id === req.params.id);
     if (!project) return sendError(res, 'Project not found', 404);
 
+    console.log('/api/projects/:id took', Date.now() - started, 'ms');
     res.json(buildProjectSummary(project, transactions));
   } catch (error) {
     console.error('Cannot read project:', error);
@@ -517,7 +545,9 @@ app.post('/api/projects', requireAuth, projectUpload, async (req, res) => {
 
       const project = projectPayload(req.body, null, req, projects);
       const validation = validateProject(project);
-      if (validation) return { status: 400, body: { ok: false, error: validation } };
+      if (validation) {
+        return { status: 400, body: { ok: false, error: validation } };
+      }
 
       projectSheet.addRow(projectToRow(project));
       await saveWorkbook(workbook);
@@ -542,11 +572,15 @@ app.put('/api/projects/:id', requireAuth, projectUpload, async (req, res) => {
       const { projects, transactions } = await getAllData();
 
       const existing = projects.find((item) => item.id === req.params.id);
-      if (!existing) return { status: 404, body: { ok: false, error: 'Project not found' } };
+      if (!existing) {
+        return { status: 404, body: { ok: false, error: 'Project not found' } };
+      }
 
       const updated = projectPayload(req.body, existing, req, projects);
       const validation = validateProject(updated);
-      if (validation) return { status: 400, body: { ok: false, error: validation } };
+      if (validation) {
+        return { status: 400, body: { ok: false, error: validation } };
+      }
 
       if (req.files?.companyLogo?.[0] && existing.logoPath && existing.logoPath !== updated.logoPath) {
         removePublicFile(existing.logoPath);
@@ -578,7 +612,9 @@ app.delete('/api/projects/:id', requireAuth, async (req, res) => {
       const { projects, transactions } = await getAllData();
 
       const existing = projects.find((item) => item.id === req.params.id);
-      if (!existing) return { status: 404, body: { ok: false, error: 'Project not found' } };
+      if (!existing) {
+        return { status: 404, body: { ok: false, error: 'Project not found' } };
+      }
 
       if (existing.logoPath) removePublicFile(existing.logoPath);
 
@@ -612,11 +648,15 @@ app.post('/api/projects/:id/transactions', requireAuth, transactionUpload, async
       const { projects, transactions } = await getAllData();
 
       const project = projects.find((item) => item.id === req.params.id);
-      if (!project) return { status: 404, body: { ok: false, error: 'Project not found' } };
+      if (!project) {
+        return { status: 404, body: { ok: false, error: 'Project not found' } };
+      }
 
       const tx = transactionPayload(project.id, req.body, req, transactions);
       const validation = validateTransaction(tx);
-      if (validation) return { status: 400, body: { ok: false, error: validation } };
+      if (validation) {
+        return { status: 400, body: { ok: false, error: validation } };
+      }
 
       transactionSheet.addRow(transactionToRow(tx));
       await saveWorkbook(workbook);
@@ -645,7 +685,9 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
       const { transactions } = await getAllData();
 
       const tx = transactions.find((item) => item.id === req.params.id);
-      if (!tx) return { status: 404, body: { ok: false, error: 'Transaction not found' } };
+      if (!tx) {
+        return { status: 404, body: { ok: false, error: 'Transaction not found' } };
+      }
 
       if (tx.billPath) removePublicFile(tx.billPath);
       transactionSheet.spliceRows(tx._rowNumber, 1);
@@ -677,8 +719,14 @@ app.get('/api/download-excel', requireAuth, async (req, res) => {
   }
 });
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+// 404 for unknown API routes
+app.use('/api', (req, res) => {
+  res.status(404).json({ ok: false, error: 'API route not found' });
+});
+
+// 404 for other unknown routes
+app.use((req, res) => {
+  res.status(404).send('Page not found');
 });
 
 app.listen(PORT, () => {
