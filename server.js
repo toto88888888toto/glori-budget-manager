@@ -30,15 +30,9 @@ app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(UPLOAD_DIR));
+app.use(express.static(path.join(__dirname, "public")));
 
-app.use((req, res, next) => {
-  console.log(
-    `[${new Date().toISOString()}] ${req.method} ${req.url} | secure=${req.secure} | xfwd=${
-      req.headers['x-forwarded-proto'] || '-'
-    }`
-  );
-  next();
-});
 
 app.use(
   session({
@@ -50,15 +44,21 @@ app.use(
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: 'auto',
+      secure: IS_PROD,
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 8
     }
   })
 );
 
-app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(PUBLIC_DIR));
+app.use((req, res, next) => {
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.url} | secure=${req.secure} | xfwd=${
+      req.headers['x-forwarded-proto'] || '-'
+    }`
+  );
+  next();
+});
 
 const USERS = [
   {
@@ -501,7 +501,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
 
     res.clearCookie('glori.sid', {
       httpOnly: true,
-      secure: 'auto',
+      secure: IS_PROD,
       sameSite: 'lax'
     });
 
