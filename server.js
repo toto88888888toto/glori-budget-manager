@@ -31,8 +31,7 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(path.join(__dirname, "public")));
-
+app.use(express.static(PUBLIC_DIR));
 
 app.use(
   session({
@@ -139,7 +138,8 @@ function ensureHeaders(sheet, headers) {
   } else {
     const current = sheet
       .getRow(1)
-      .values.slice(1)
+      .values
+      .slice(1)
       .map((v) => String(v || '').trim());
 
     const matches = JSON.stringify(current) === JSON.stringify(headers);
@@ -535,14 +535,12 @@ app.get('/index.html', requireAuth, (req, res) => {
 });
 
 app.get('/api/projects', requireAuth, async (req, res) => {
-  const started = Date.now();
   try {
     const { projects, transactions } = await getAllData();
     const items = projects
       .map((project) => buildProjectSummary(project, transactions))
       .sort((a, b) => toNumber(b.no) - toNumber(a.no));
 
-    console.log('/api/projects took', Date.now() - started, 'ms');
     return res.json(items);
   } catch (error) {
     console.error('Cannot read projects:', error);
@@ -551,13 +549,11 @@ app.get('/api/projects', requireAuth, async (req, res) => {
 });
 
 app.get('/api/projects/:id', requireAuth, async (req, res) => {
-  const started = Date.now();
   try {
     const { projects, transactions } = await getAllData();
     const project = projects.find((item) => item.id === req.params.id);
     if (!project) return sendError(res, 'Project not found', 404);
 
-    console.log('/api/projects/:id took', Date.now() - started, 'ms');
     return res.json(buildProjectSummary(project, transactions));
   } catch (error) {
     console.error('Cannot read project:', error);
