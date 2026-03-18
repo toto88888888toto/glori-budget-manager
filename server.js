@@ -21,25 +21,31 @@ const TRANSACTION_SHEET = 'Transactions';
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+app.set('trust proxy', 1);
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-app.use(session({
-  secret: 'glori_secret_2026',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 8
-  }
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'glori_secret_2026',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: false, // change to true only if you fully enable HTTPS session handling
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 8
+    }
+  })
+);
 
 const USERS = [
   {
     username: 'bin',
-    passwordHash: '$2b$10$6nm6.uHG3zmS7/u4nliIMukMkuZYJsTpnOE2ugpwvXKRifDKbrhCS'
+    passwordHash:
+      '$2b$10$6nm6.uHG3zmS7/u4nliIMukMkuZYJsTpnOE2ugpwvXKRifDKbrhCS'
   }
 ];
 
@@ -50,16 +56,21 @@ function requireAuth(req, res, next) {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
 
     const user = USERS.find((u) => u.username === username);
     if (!user) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+      return res
+        .status(401)
+        .json({ ok: false, message: 'Invalid username or password' });
     }
 
     const matched = await bcrypt.compare(password, user.passwordHash);
     if (!matched) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+      return res
+        .status(401)
+        .json({ ok: false, message: 'Invalid username or password' });
     }
 
     req.session.user = { username: user.username };
@@ -70,7 +81,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', requireAuth, (req, res) => {
   req.session.destroy(() => {
     res.json({ ok: true });
   });
@@ -83,6 +94,10 @@ app.get('/api/me', (req, res) => {
   return res.json({ ok: true, user: req.session.user });
 });
 
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
 app.use(express.static(PUBLIC_DIR));
 
 const storage = multer.diskStorage({
@@ -93,6 +108,7 @@ const storage = multer.diskStorage({
       .basename(file.originalname || 'file', ext)
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .slice(0, 80);
+
     cb(null, `${Date.now()}-${base}${ext}`);
   }
 });
@@ -142,7 +158,9 @@ function toNumber(value) {
 function normalizeDate(value) {
   if (!value) return '';
   if (typeof value === 'string') return value.slice(0, 10);
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
   return String(value).slice(0, 10);
 }
 
@@ -167,6 +185,7 @@ function removePublicFile(filePath) {
 function styleSheet(sheet, count) {
   sheet.views = [{ state: 'frozen', ySplit: 1 }];
   sheet.columns = Array.from({ length: count }, () => ({ width: 22 }));
+
   const row = sheet.getRow(1);
   row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
   row.alignment = { vertical: 'middle', horizontal: 'center' };
@@ -182,18 +201,43 @@ function ensureHeaders(sheet, headers) {
   if (sheet.rowCount === 0) {
     sheet.addRow(headers);
   } else {
-    const current = sheet.getRow(1).values.slice(1).map((value) => String(value || '').trim());
+    const current = sheet
+      .getRow(1)
+      .values.slice(1)
+      .map((value) => String(value || '').trim());
+
     const matches = JSON.stringify(current) === JSON.stringify(headers);
+
     if (!matches) {
-      sheet.spliceRows(1, 1);
+      if (sheet.rowCount >= 1) sheet.spliceRows(1, 1);
       sheet.insertRow(1, headers);
     }
   }
+
   styleSheet(sheet, headers.length);
 }
 
+let workbookCache = null;
+let projectSheetCache = null;
+let transactionSheetCache = null;
+
+function invalidateWorkbookCache() {
+  workbookCache = null;
+  projectSheetCache = null;
+  transactionSheetCache = null;
+}
+
 async function openWorkbook() {
+  if (workbookCache && projectSheetCache && transactionSheetCache) {
+    return {
+      workbook: workbookCache,
+      projectSheet: projectSheetCache,
+      transactionSheet: transactionSheetCache
+    };
+  }
+
   const workbook = new ExcelJS.Workbook();
+
   if (fs.existsSync(EXCEL_FILE)) {
     await workbook.xlsx.readFile(EXCEL_FILE);
   }
@@ -207,7 +251,24 @@ async function openWorkbook() {
   ensureHeaders(projectSheet, PROJECT_HEADERS);
   ensureHeaders(transactionSheet, TRANSACTION_HEADERS);
 
+  workbookCache = workbook;
+  projectSheetCache = projectSheet;
+  transactionSheetCache = transactionSheet;
+
   return { workbook, projectSheet, transactionSheet };
+}
+
+let writeQueue = Promise.resolve();
+
+function queueWrite(task) {
+  const run = writeQueue.then(task, task);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
+async function saveWorkbook(workbook) {
+  await workbook.xlsx.writeFile(EXCEL_FILE);
+  invalidateWorkbookCache();
 }
 
 function rowToProject(row) {
@@ -317,9 +378,11 @@ function nextProjectCode(projects) {
 }
 
 function nextTransactionNo(transactions, projectId) {
-  return transactions
-    .filter((tx) => tx.projectId === projectId)
-    .reduce((max, item) => Math.max(max, toNumber(item.no)), 0) + 1;
+  return (
+    transactions
+      .filter((tx) => tx.projectId === projectId)
+      .reduce((max, item) => Math.max(max, toNumber(item.no)), 0) + 1
+  );
 }
 
 function validateProject(project) {
@@ -403,7 +466,7 @@ function buildProjectSummary(project, transactions) {
 }
 
 function sendError(res, message, status = 500) {
-  return res.status(status).json({ error: message });
+  return res.status(status).json({ ok: false, error: message });
 }
 
 app.get('/api/projects', requireAuth, async (req, res) => {
@@ -412,151 +475,204 @@ app.get('/api/projects', requireAuth, async (req, res) => {
     const items = projects
       .map((project) => buildProjectSummary(project, transactions))
       .sort((a, b) => toNumber(b.no) - toNumber(a.no));
+
     res.json(items);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot read projects:', error);
     sendError(res, 'Cannot read projects');
+  }
+});
+
+app.get('/api/projects/:id', requireAuth, async (req, res) => {
+  try {
+    const { projects, transactions } = await getAllData();
+    const project = projects.find((item) => item.id === req.params.id);
+    if (!project) return sendError(res, 'Project not found', 404);
+
+    res.json(buildProjectSummary(project, transactions));
+  } catch (error) {
+    console.error('Cannot read project:', error);
+    sendError(res, 'Cannot read project');
+  }
+});
+
+app.get('/api/next-project-code', requireAuth, async (req, res) => {
+  try {
+    const { projects } = await getAllData();
+    res.json({
+      no: nextProjectNo(projects),
+      projectCode: nextProjectCode(projects)
+    });
+  } catch (error) {
+    console.error('Cannot generate project code:', error);
+    sendError(res, 'Cannot generate project code');
   }
 });
 
 app.post('/api/projects', requireAuth, projectUpload, async (req, res) => {
   try {
-    const { projects, transactions } = await getAllData();
-    const project = projects.find((item) => item.id === req.params.id);
-    if (!project) return sendError(res, 'Project not found', 404);
-    res.json(buildProjectSummary(project, transactions));
-  } catch (error) {
-    console.error(error);
-    sendError(res, 'Cannot read project');
-  }
-});
+    const result = await queueWrite(async () => {
+      const { workbook, projectSheet } = await openWorkbook();
+      const { projects, transactions } = await getAllData();
 
-app.get('/api/next-project-code', async (req, res) => {
-  try {
-    const { projects } = await getAllData();
-    res.json({ no: nextProjectNo(projects), projectCode: nextProjectCode(projects) });
-  } catch (error) {
-    console.error(error);
-    sendError(res, 'Cannot generate project code');
-  }
-});
+      const project = projectPayload(req.body, null, req, projects);
+      const validation = validateProject(project);
+      if (validation) return { status: 400, body: { ok: false, error: validation } };
 
-app.post('/api/projects', projectUpload, async (req, res) => {
-  try {
-    const { workbook, projectSheet } = await openWorkbook();
-    const { projects, transactions } = await getAllData();
-    const project = projectPayload(req.body, null, req, projects);
-    const validation = validateProject(project);
-    if (validation) return sendError(res, validation, 400);
+      projectSheet.addRow(projectToRow(project));
+      await saveWorkbook(workbook);
 
-    projectSheet.addRow(projectToRow(project));
-    await workbook.xlsx.writeFile(EXCEL_FILE);
-    res.json({ ok: true, project: buildProjectSummary(project, transactions) });
+      return {
+        status: 200,
+        body: { ok: true, project: buildProjectSummary(project, transactions) }
+      };
+    });
+
+    res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot save project:', error);
     sendError(res, 'Cannot save project');
   }
 });
 
-app.put('/api/projects/:id', requireAuth, async (req, res) => {
+app.put('/api/projects/:id', requireAuth, projectUpload, async (req, res) => {
   try {
-    const { workbook, projectSheet } = await openWorkbook();
-    const { projects, transactions } = await getAllData();
-    const existing = projects.find((item) => item.id === req.params.id);
-    if (!existing) return sendError(res, 'Project not found', 404);
+    const result = await queueWrite(async () => {
+      const { workbook, projectSheet } = await openWorkbook();
+      const { projects, transactions } = await getAllData();
 
-    const updated = projectPayload(req.body, existing, req, projects);
-    const validation = validateProject(updated);
-    if (validation) return sendError(res, validation, 400);
+      const existing = projects.find((item) => item.id === req.params.id);
+      if (!existing) return { status: 404, body: { ok: false, error: 'Project not found' } };
 
-    if (req.files?.companyLogo?.[0] && existing.logoPath && existing.logoPath !== updated.logoPath) {
-      removePublicFile(existing.logoPath);
-    }
+      const updated = projectPayload(req.body, existing, req, projects);
+      const validation = validateProject(updated);
+      if (validation) return { status: 400, body: { ok: false, error: validation } };
 
-    const row = projectSheet.getRow(existing._rowNumber);
-    row.values = [null, ...projectToRow(updated)];
-    row.commit();
+      if (req.files?.companyLogo?.[0] && existing.logoPath && existing.logoPath !== updated.logoPath) {
+        removePublicFile(existing.logoPath);
+      }
 
-    await workbook.xlsx.writeFile(EXCEL_FILE);
-    res.json({ ok: true, project: buildProjectSummary(updated, transactions) });
+      const row = projectSheet.getRow(existing._rowNumber);
+      row.values = [null, ...projectToRow(updated)];
+      row.commit();
+
+      await saveWorkbook(workbook);
+
+      return {
+        status: 200,
+        body: { ok: true, project: buildProjectSummary(updated, transactions) }
+      };
+    });
+
+    res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot update project:', error);
     sendError(res, 'Cannot update project');
   }
 });
 
 app.delete('/api/projects/:id', requireAuth, async (req, res) => {
   try {
-    const { workbook, projectSheet, transactionSheet } = await openWorkbook();
-    const { projects, transactions } = await getAllData();
-    const existing = projects.find((item) => item.id === req.params.id);
-    if (!existing) return sendError(res, 'Project not found', 404);
+    const result = await queueWrite(async () => {
+      const { workbook, projectSheet, transactionSheet } = await openWorkbook();
+      const { projects, transactions } = await getAllData();
 
-    if (existing.logoPath) removePublicFile(existing.logoPath);
+      const existing = projects.find((item) => item.id === req.params.id);
+      if (!existing) return { status: 404, body: { ok: false, error: 'Project not found' } };
 
-    const related = transactions.filter((tx) => tx.projectId === existing.id);
-    related.forEach((tx) => {
-      if (tx.billPath) removePublicFile(tx.billPath);
+      if (existing.logoPath) removePublicFile(existing.logoPath);
+
+      const related = transactions.filter((tx) => tx.projectId === existing.id);
+      related.forEach((tx) => {
+        if (tx.billPath) removePublicFile(tx.billPath);
+      });
+
+      related
+        .map((tx) => tx._rowNumber)
+        .sort((a, b) => b - a)
+        .forEach((rowNumber) => transactionSheet.spliceRows(rowNumber, 1));
+
+      projectSheet.spliceRows(existing._rowNumber, 1);
+      await saveWorkbook(workbook);
+
+      return { status: 200, body: { ok: true } };
     });
 
-    related
-      .map((tx) => tx._rowNumber)
-      .sort((a, b) => b - a)
-      .forEach((rowNumber) => transactionSheet.spliceRows(rowNumber, 1));
-
-    projectSheet.spliceRows(existing._rowNumber, 1);
-    await workbook.xlsx.writeFile(EXCEL_FILE);
-    res.json({ ok: true });
+    res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot delete project:', error);
     sendError(res, 'Cannot delete project');
   }
 });
 
-app.post('/api/projects/:id/transactions', transactionUpload, async (req, res) => {
+app.post('/api/projects/:id/transactions', requireAuth, transactionUpload, async (req, res) => {
   try {
-    const { workbook, transactionSheet } = await openWorkbook();
-    const { projects, transactions } = await getAllData();
-    const project = projects.find((item) => item.id === req.params.id);
-    if (!project) return sendError(res, 'Project not found', 404);
+    const result = await queueWrite(async () => {
+      const { workbook, transactionSheet } = await openWorkbook();
+      const { projects, transactions } = await getAllData();
 
-    const tx = transactionPayload(project.id, req.body, req, transactions);
-    const validation = validateTransaction(tx);
-    if (validation) return sendError(res, validation, 400);
+      const project = projects.find((item) => item.id === req.params.id);
+      if (!project) return { status: 404, body: { ok: false, error: 'Project not found' } };
 
-    transactionSheet.addRow(transactionToRow(tx));
-    await workbook.xlsx.writeFile(EXCEL_FILE);
+      const tx = transactionPayload(project.id, req.body, req, transactions);
+      const validation = validateTransaction(tx);
+      if (validation) return { status: 400, body: { ok: false, error: validation } };
 
-    res.json({ ok: true, transaction: tx, project: buildProjectSummary(project, [...transactions, tx]) });
+      transactionSheet.addRow(transactionToRow(tx));
+      await saveWorkbook(workbook);
+
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          transaction: tx,
+          project: buildProjectSummary(project, [...transactions, tx])
+        }
+      };
+    });
+
+    res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot save transaction:', error);
     sendError(res, 'Cannot save transaction');
   }
 });
 
-app.delete('/api/transactions/:id', async (req, res) => {
+app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
   try {
-    const { workbook, transactionSheet } = await openWorkbook();
-    const { transactions } = await getAllData();
-    const tx = transactions.find((item) => item.id === req.params.id);
-    if (!tx) return sendError(res, 'Transaction not found', 404);
+    const result = await queueWrite(async () => {
+      const { workbook, transactionSheet } = await openWorkbook();
+      const { transactions } = await getAllData();
 
-    if (tx.billPath) removePublicFile(tx.billPath);
-    transactionSheet.spliceRows(tx._rowNumber, 1);
-    await workbook.xlsx.writeFile(EXCEL_FILE);
-    res.json({ ok: true });
+      const tx = transactions.find((item) => item.id === req.params.id);
+      if (!tx) return { status: 404, body: { ok: false, error: 'Transaction not found' } };
+
+      if (tx.billPath) removePublicFile(tx.billPath);
+      transactionSheet.spliceRows(tx._rowNumber, 1);
+      await saveWorkbook(workbook);
+
+      return { status: 200, body: { ok: true } };
+    });
+
+    res.status(result.status).json(result.body);
   } catch (error) {
-    console.error(error);
+    console.error('Cannot delete transaction:', error);
     sendError(res, 'Cannot delete transaction');
   }
 });
 
-app.get('/api/download-excel', async (req, res) => {
+app.get('/api/download-excel', requireAuth, async (req, res) => {
   try {
-    await openWorkbook();
+    if (!fs.existsSync(EXCEL_FILE)) {
+      await queueWrite(async () => {
+        const { workbook } = await openWorkbook();
+        await saveWorkbook(workbook);
+      });
+    }
+
     res.download(EXCEL_FILE, 'glori-budget.xlsx');
   } catch (error) {
-    console.error(error);
+    console.error('Cannot download Excel:', error);
     sendError(res, 'Cannot download Excel');
   }
 });
