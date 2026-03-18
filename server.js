@@ -31,7 +31,11 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "login.html"));
+});
 
 app.use(
   session({
