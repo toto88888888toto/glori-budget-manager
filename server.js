@@ -9,12 +9,17 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 const ROOT_DIR = __dirname;
 const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
 const DATA_DIR = path.join(ROOT_DIR, 'data');
 const UPLOAD_DIR = path.join(ROOT_DIR, 'uploads');
 const EXCEL_FILE = path.join(DATA_DIR, 'budget.xlsx');
+
+const LOGIN_HTML = path.join(PUBLIC_DIR, 'login.html');
+const INDEX_HTML = path.join(PUBLIC_DIR, 'index.html');
+
 const PROJECT_SHEET = 'Projects';
 const TRANSACTION_SHEET = 'Transactions';
 
@@ -26,27 +31,31 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(PUBLIC_DIR));
+app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'glori_secret_2026',
+    name: 'glori.sid',
+    secret: process.env.SESSION_SECRET || 'glori_secret_2026_change_me',
     resave: false,
     saveUninitialized: false,
     rolling: true,
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: IS_PROD,
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 8
     }
   })
 );
 
-// request log
 app.use((req, res, next) => {
-  console.log(new Date().toISOString(), req.method, req.url);
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.url} | secure=${req.secure} | xfwd=${
+      req.headers['x-forwarded-proto'] || '-'
+    }`
+  );
   next();
 });
 
@@ -64,7 +73,7 @@ function isPageRequest(req) {
 }
 
 function requireAuth(req, res, next) {
-  if (req.session && req.session.user) return next();
+  if (req.session?.user) return next();
 
   if (isPageRequest(req)) {
     return res.redirect('/login.html');
@@ -73,122 +82,9 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, message: 'Unauthorized' });
 }
 
-app.post('/api/login', async (req, res) => {
-  try {
-    const username = String(req.body.username || '').trim();
-    const password = String(req.body.password || '');
-
-    const user = USERS.find((u) => u.username === username);
-    if (!user) {
-      return res
-        .status(401)
-        .json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    const matched = await bcrypt.compare(password, user.passwordHash);
-    if (!matched) {
-      return res
-        .status(401)
-        .json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    req.session.user = { username: user.username };
-
-    return req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        return res.status(500).json({ ok: false, message: 'Login failed' });
-      }
-      return res.json({ ok: true, user: req.session.user });
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    return res.status(500).json({ ok: false, message: 'Login failed' });
-  }
-});
-
-app.post('/api/logout', requireAuth, (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      console.error('Logout error:', err);
-      return res.status(500).json({ ok: false, message: 'Logout failed' });
-    }
-
-    res.clearCookie('connect.sid', {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'lax'
-    });
-
-    return res.json({ ok: true });
-  });
-});
-
-app.get('/api/me', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ ok: false });
-  }
-  return res.json({ ok: true, user: req.session.user });
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({
-    ok: true,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
-});
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '');
-    const base = path
-      .basename(file.originalname || 'file', ext)
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .slice(0, 80);
-
-    cb(null, `${Date.now()}-${base}${ext}`);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 20 * 1024 * 1024, files: 10 }
-});
-
-const projectUpload = upload.fields([{ name: 'companyLogo', maxCount: 1 }]);
-const transactionUpload = upload.fields([{ name: 'billFile', maxCount: 1 }]);
-
-const PROJECT_HEADERS = [
-  'id',
-  'no',
-  'projectCode',
-  'projectName',
-  'category',
-  'owner',
-  'startDate',
-  'endDate',
-  'remark',
-  'logoPath',
-  'createdAt',
-  'updatedAt'
-];
-
-const TRANSACTION_HEADERS = [
-  'id',
-  'no',
-  'projectId',
-  'type',
-  'category',
-  'description',
-  'currency',
-  'amount',
-  'date',
-  'billPath',
-  'createdAt',
-  'updatedAt'
-];
+function sendError(res, message, status = 500) {
+  return res.status(status).json({ ok: false, error: message });
+}
 
 function toNumber(value) {
   return Number(String(value ?? '').replace(/,/g, '').trim()) || 0;
@@ -240,7 +136,11 @@ function ensureHeaders(sheet, headers) {
   if (sheet.rowCount === 0) {
     sheet.addRow(headers);
   } else {
-    const current = sheet.getRow(1).values.slice(1).map((v) => String(v || '').trim());
+    const current = sheet
+      .getRow(1)
+      .values.slice(1)
+      .map((v) => String(v || '').trim());
+
     const matches = JSON.stringify(current) === JSON.stringify(headers);
 
     if (!matches) {
@@ -251,6 +151,57 @@ function ensureHeaders(sheet, headers) {
 
   styleSheet(sheet, headers.length);
 }
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '');
+    const base = path
+      .basename(file.originalname || 'file', ext)
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .slice(0, 80);
+
+    cb(null, `${Date.now()}-${base}${ext}`);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024, files: 10 }
+});
+
+const projectUpload = upload.fields([{ name: 'companyLogo', maxCount: 1 }]);
+const transactionUpload = upload.fields([{ name: 'billFile', maxCount: 1 }]);
+
+const PROJECT_HEADERS = [
+  'id',
+  'no',
+  'projectCode',
+  'projectName',
+  'category',
+  'owner',
+  'startDate',
+  'endDate',
+  'remark',
+  'logoPath',
+  'createdAt',
+  'updatedAt'
+];
+
+const TRANSACTION_HEADERS = [
+  'id',
+  'no',
+  'projectId',
+  'type',
+  'category',
+  'description',
+  'currency',
+  'amount',
+  'date',
+  'billPath',
+  'createdAt',
+  'updatedAt'
+];
 
 let workbookCache = null;
 let projectSheetCache = null;
@@ -500,30 +451,88 @@ function buildProjectSummary(project, transactions) {
   };
 }
 
-function sendError(res, message, status = 500) {
-  return res.status(status).json({ ok: false, error: message });
-}
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    app: 'Glori Budget Manager',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV || 'development'
+  });
+});
 
-// page routes
+app.post('/api/login', async (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
+
+    const user = USERS.find((u) => u.username === username);
+    if (!user) {
+      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+    }
+
+    const matched = await bcrypt.compare(password, user.passwordHash);
+    if (!matched) {
+      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+    }
+
+    req.session.user = { username: user.username };
+
+    req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+        return res.status(500).json({ ok: false, message: 'Login failed' });
+      }
+      return res.json({ ok: true, user: req.session.user });
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    return res.status(500).json({ ok: false, message: 'Login failed' });
+  }
+});
+
+app.post('/api/logout', requireAuth, (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).json({ ok: false, message: 'Logout failed' });
+    }
+
+    res.clearCookie('glori.sid', {
+      httpOnly: true,
+      secure: IS_PROD,
+      sameSite: 'lax'
+    });
+
+    return res.json({ ok: true });
+  });
+});
+
+app.get('/api/me', (req, res) => {
+  if (!req.session.user) {
+    return res.status(401).json({ ok: false });
+  }
+  return res.json({ ok: true, user: req.session.user });
+});
+
 app.get('/', (req, res) => {
   if (req.session?.user) {
     return res.redirect('/index.html');
   }
-  return res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+  return res.sendFile(LOGIN_HTML);
 });
 
 app.get('/login.html', (req, res) => {
   if (req.session?.user) {
     return res.redirect('/index.html');
   }
-  return res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+  return res.sendFile(LOGIN_HTML);
 });
 
 app.get('/index.html', requireAuth, (req, res) => {
-  return res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  return res.sendFile(INDEX_HTML);
 });
 
-// api routes
 app.get('/api/projects', requireAuth, async (req, res) => {
   const started = Date.now();
   try {
@@ -750,12 +759,10 @@ app.get('/api/download-excel', requireAuth, async (req, res) => {
   }
 });
 
-// unknown api routes
 app.use('/api', (req, res) => {
   return res.status(404).json({ ok: false, error: 'API route not found' });
 });
 
-// unknown page routes
 app.use((req, res) => {
   if (isPageRequest(req)) {
     return res.redirect('/');
@@ -763,6 +770,11 @@ app.use((req, res) => {
   return res.status(404).send('Page not found');
 });
 
-app.listen(PORT, () => {
-  console.log(`Glori Budget Manager running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Glori Budget Manager running on port ${PORT}`);
+  console.log(`NODE_ENV=${process.env.NODE_ENV || 'development'}`);
+  console.log(`PUBLIC_DIR=${PUBLIC_DIR}`);
+  console.log(`DATA_DIR=${DATA_DIR}`);
+  console.log(`UPLOAD_DIR=${UPLOAD_DIR}`);
+  console.log(`EXCEL_FILE=${EXCEL_FILE}`);
 });
