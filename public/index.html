@@ -4,9 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Glori Budget Manager</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -14,246 +18,330 @@
     <div class="container topbar-inner">
       <div class="brand">
         <div class="brand-logo-wrap">
-          <img src="images/Logo.png" alt="Glori Logo" class="logo" onerror="this.style.display='none';this.parentNode.innerHTML='<span class=\'brand-fallback\'>GB</span>'">
+          <img src="images/Logo.png" alt="Glori Budget Manager Logo" class="brand-logo">
         </div>
         <div>
           <h1>Glori Budget Manager</h1>
-          <p class="brand-sub">Local Excel version</p>
+          <p class="brand-sub">Project first, then add income / investment / expense</p>
         </div>
       </div>
 
       <div class="top-actions">
-        <button id="downloadExcelBtn" class="btn btn-light" type="button">Download Excel</button>
-        <button id="resetBtn" class="btn btn-light" type="button">Clear Form</button>
+        <button class="btn btn-light" id="downloadExcelBtn" type="button">Download Excel</button>
+        <button class="btn btn-light" id="refreshBtn" type="button">Refresh</button>
       </div>
     </div>
   </header>
 
-  <main class="container page">
-    <section class="card hero-card">
-      <div class="hero-copy">
-        <h2>Manage projects, budget, spending and balance in one place.</h2>
-        <p>Auto project code, save to Excel, edit records, track progress and search quickly.</p>
+  <main class="page">
+    <div class="container">
+      <section class="hero-card card">
+        <div class="hero-copy">
+          <p class="eyebrow">Backend First Workflow</p>
+          <h2>Create each project once, then keep adding transactions under that project.</h2>
+          <p>
+            This version matches your Excel exactly. Project data is stored in the
+            <strong>Projects</strong> sheet and money movement is stored in the
+            <strong>Transactions</strong> sheet.
+          </p>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Total Projects</div>
+            <div class="kpi-value" id="kpiProjects">0</div>
+          </div>
+
+          <div class="kpi-card success">
+            <div class="kpi-label">Total Income</div>
+            <div class="kpi-value" id="kpiIncome">0</div>
+          </div>
+
+          <div class="kpi-card investment">
+            <div class="kpi-label">Total Investment</div>
+            <div class="kpi-value" id="kpiInvestment">0</div>
+          </div>
+
+          <div class="kpi-card warn">
+            <div class="kpi-label">Total Expense</div>
+            <div class="kpi-value" id="kpiExpense">0</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-grid">
+        <aside class="left-column">
+          <div class="card form-card">
+            <div class="section-head">
+              <h3>Project Form</h3>
+              <p>Create a project once. Edit later if needed.</p>
+            </div>
+
+            <form id="projectForm" enctype="multipart/form-data">
+              <input type="hidden" id="editId" name="editId" />
+              <input type="hidden" id="keepLogoPath" name="keepLogoPath" />
+
+              <div class="form-grid">
+                <div class="field">
+                  <label for="projectNo">No.</label>
+                  <input id="projectNo" name="projectNo" type="text" readonly />
+                </div>
+
+                <div class="field">
+                  <label for="projectCode">Project Code</label>
+                  <input id="projectCode" name="projectCode" type="text" readonly />
+                </div>
+
+                <div class="field full">
+                  <label for="projectName">Project Name</label>
+                  <input
+                    id="projectName"
+                    name="projectName"
+                    type="text"
+                    placeholder="Enter project name"
+                    required
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="category">Category</label>
+                  <input
+                    id="category"
+                    name="category"
+                    type="text"
+                    list="projectCategoryList"
+                    placeholder="Type or choose category"
+                    required
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner">Owner</label>
+                  <input
+                    id="owner"
+                    name="owner"
+                    type="text"
+                    list="filterOwnerList"
+                    placeholder="Owner / person in charge"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="startDate">Start Date</label>
+                  <input id="startDate" name="startDate" type="date" />
+                </div>
+
+                <div class="field">
+                  <label for="endDate">End Date</label>
+                  <input id="endDate" name="endDate" type="date" />
+                </div>
+
+                <div class="field full">
+                  <label for="remark">Remark</label>
+                  <textarea
+                    id="remark"
+                    name="remark"
+                    placeholder="Optional remark"
+                  ></textarea>
+                </div>
+
+                <div class="field full">
+                  <label for="companyLogo">Logo</label>
+                  <input id="companyLogo" name="companyLogo" type="file" accept="image/*" />
+                </div>
+
+                <div class="field full">
+                  <label>Logo Preview</label>
+                  <div class="logo-preview empty" id="logoPreview">No logo selected</div>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button class="btn btn-primary" id="saveBtn" type="submit">Save Project</button>
+                <button class="btn btn-light" id="resetBtn" type="button">Clear</button>
+              </div>
+            </form>
+          </div>
+        </aside>
+
+        <section class="right-column">
+          <div class="card projects-card">
+            <div class="section-head">
+              <div>
+                <h3>Projects</h3>
+                <p>Click a card to open project detail and add transaction.</p>
+              </div>
+            </div>
+
+            <div class="filter-grid">
+              <div class="field">
+                <label for="searchInput">Search</label>
+                <input
+                  id="searchInput"
+                  type="text"
+                  placeholder="Search by code, name, category, owner"
+                />
+              </div>
+
+              <div class="field">
+                <label for="filterCategory">Category</label>
+                <input
+                  id="filterCategory"
+                  type="text"
+                  list="filterCategoryList"
+                  placeholder="All"
+                />
+              </div>
+
+              <div class="field">
+                <label for="filterOwner">Owner</label>
+                <input
+                  id="filterOwner"
+                  type="text"
+                  list="filterOwnerList"
+                  placeholder="All"
+                />
+              </div>
+
+              <div class="field">
+                <label for="sortBy">Sort</label>
+                <select id="sortBy">
+                  <option value="latest">Latest</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="name">Project Name</option>
+                  <option value="code">Project Code</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="projectList" class="cards-grid"></div>
+          </div>
+
+          <div class="bottom-grid single">
+            <div class="card detail-card hidden" id="detailCard">
+              <div class="section-head">
+                <h3>Project Detail</h3>
+                <p>Selected project summary and transaction history.</p>
+              </div>
+              <div id="projectDetail"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+
+  <!-- Transaction Modal -->
+  <div id="txModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" id="txModalBackdrop"></div>
+
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="txModalTitle">
+      <div class="modal-header">
+        <div>
+          <h3 id="txModalTitle">Add Transaction</h3>
+          <p>Select income / investment / expense for this project.</p>
+        </div>
+        <button type="button" class="modal-close" id="closeTxModal" aria-label="Close">✕</button>
       </div>
 
-      <div class="kpi-grid" id="summaryCards">
-        <article class="kpi-card">
-          <div class="kpi-label">Total Projects</div>
-          <div class="kpi-value" id="kpiProjects">0</div>
-        </article>
-        <article class="kpi-card">
-          <div class="kpi-label">Total Budget</div>
-          <div class="kpi-value" id="kpiBudget">0</div>
-        </article>
-        <article class="kpi-card">
-          <div class="kpi-label">Total Spent</div>
-          <div class="kpi-value" id="kpiSpent">0</div>
-        </article>
-        <article class="kpi-card success">
-          <div class="kpi-label">Balance</div>
-          <div class="kpi-value" id="kpiBalance">0</div>
-        </article>
-      </div>
-    </section>
+      <form id="transactionForm" enctype="multipart/form-data">
+        <input type="hidden" id="selectedProjectId" name="projectId" />
 
-    <section class="card">
-      <div class="section-head">
-        <h3 id="formTitle">Add Budget Project</h3>
-        <p>Project Code is auto generated, but you can still type your own code if needed.</p>
-      </div>
-
-      <form id="projectForm">
-        <input type="hidden" id="editId" />
+        <div class="field full">
+          <label for="selectedProjectText">Selected Project</label>
+          <input
+            id="selectedProjectText"
+            type="text"
+            readonly
+            placeholder="Select a project first"
+          />
+        </div>
 
         <div class="form-grid">
           <div class="field">
-            <label for="projectCode">Project Code</label>
-            <input id="projectCode" name="projectCode" type="text" placeholder="GB-0001" />
-          </div>
-
-          <div class="field">
-            <label for="status">Status</label>
-            <select id="status" name="status">
-              <option value="Planned">Planned</option>
-              <option value="In Progress">In Progress</option>
-              <option value="On Hold">On Hold</option>
-              <option value="Completed">Completed</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
-          </div>
-
-          <div class="field full">
-            <label for="projectName">Project Name</label>
-            <input id="projectName" name="projectName" type="text" placeholder="Enter project name" required />
-          </div>
-
-          <div class="field">
-            <label for="department">Department</label>
-            <input id="department" name="department" type="text" list="departmentSuggestions" placeholder="Type or select department" required />
-            <datalist id="departmentSuggestions"></datalist>
-          </div>
-
-          <div class="field">
-            <label for="budgetCategory">Budget Category</label>
-            <input id="budgetCategory" name="budgetCategory" type="text" list="categorySuggestions" placeholder="Type or select category" required />
-            <datalist id="categorySuggestions"></datalist>
-          </div>
-
-          <div class="field">
-            <label for="owner">Responsible</label>
-            <input id="owner" name="owner" type="text" list="ownerSuggestions" placeholder="Type or select responsible" />
-            <datalist id="ownerSuggestions"></datalist>
-          </div>
-
-          <div class="field">
-            <label for="priority">Priority</label>
-            <select id="priority" name="priority">
-              <option value="Low">Low</option>
-              <option value="Medium" selected>Medium</option>
-              <option value="High">High</option>
-              <option value="Urgent">Urgent</option>
+            <label for="txType">Type</label>
+            <select id="txType" name="type" required>
+              <option value="income">Income</option>
+              <option value="investment">Investment</option>
+              <option value="expense">Expense</option>
             </select>
           </div>
 
           <div class="field">
-            <label for="budgetAmount">Budget Amount</label>
-            <input id="budgetAmount" name="budgetAmount" type="text" inputmode="decimal" placeholder="0" required />
-          </div>
-
-          <div class="field">
-            <label for="spentAmount">Spent Amount</label>
-            <input id="spentAmount" name="spentAmount" type="text" inputmode="decimal" placeholder="0" />
-          </div>
-
-          <div class="field">
-            <label for="startDate">Start Date</label>
-            <input id="startDate" name="startDate" type="date" />
-          </div>
-
-          <div class="field">
-            <label for="endDate">End Date</label>
-            <input id="endDate" name="endDate" type="date" />
+            <label for="txCategory">Category</label>
+            <input
+              id="txCategory"
+              name="category"
+              type="text"
+              list="txCategoryList"
+              placeholder="Type or choose category"
+              required
+            />
           </div>
 
           <div class="field full">
-            <label for="remark">Remark</label>
-            <textarea id="remark" name="remark" placeholder="Remark or note"></textarea>
+            <label for="txDescription">Description</label>
+            <textarea
+              id="txDescription"
+              name="description"
+              placeholder="Bill / receipt / payment detail"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <label for="txCurrency">Currency</label>
+            <select id="txCurrency" name="currency" required>
+              <option value="LAK">LAK</option>
+              <option value="THB">THB</option>
+              <option value="USD">USD</option>
+              <option value="CNY">CNY</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="txAmount">Amount</label>
+            <input
+              id="txAmount"
+              type="text"
+              inputmode="decimal"
+              placeholder="0"
+              required
+            />
+            <input type="hidden" name="amount" id="txAmountRaw" />
+          </div>
+
+          <div class="field">
+            <label for="txDate">Date</label>
+            <input id="txDate" name="date" type="date" required />
+          </div>
+
+          <div class="field">
+            <label for="billFile">Upload Bill</label>
+            <input id="billFile" name="billFile" type="file" />
           </div>
         </div>
 
         <div class="form-actions">
-          <button id="saveBtn" class="btn btn-primary" type="submit">Save Project</button>
-          <button id="cancelEditBtn" class="btn btn-light hidden" type="button">Cancel Edit</button>
+          <button class="btn btn-primary" id="addTxBtn" type="submit">Add Transaction</button>
+          <button class="btn btn-light" id="clearTxBtn" type="button">Clear</button>
         </div>
       </form>
-    </section>
+    </div>
+  </div>
 
-    <section class="card">
-      <div class="section-head row-between">
-        <div>
-          <h3>Project List</h3>
-          <p id="resultCount">0 projects</p>
-        </div>
-      </div>
+  <datalist id="projectCategoryList">
+    <option value="Administrative expenses"></option>
+  </datalist>
 
-      <div class="filter-grid">
-        <div class="field">
-          <label for="searchInput">Search</label>
-          <input id="searchInput" type="text" placeholder="Search project code, name, department, owner..." />
-        </div>
+  <datalist id="txCategoryList">
+    <option value="Administrative expenses"></option>
+  </datalist>
 
-        <div class="field">
-          <label for="filterStatus">Filter Status</label>
-          <select id="filterStatus">
-            <option value="">All Status</option>
-            <option value="Planned">Planned</option>
-            <option value="In Progress">In Progress</option>
-            <option value="On Hold">On Hold</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
-        </div>
+  <datalist id="filterCategoryList">
+    <option value="Administrative expenses"></option>
+  </datalist>
 
-        <div class="field">
-          <label for="filterDepartment">Filter Department</label>
-          <select id="filterDepartment">
-            <option value="">All Departments</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="sortBy">Sort By</label>
-          <select id="sortBy">
-            <option value="newest">Newest</option>
-            <option value="budget-desc">Budget High to Low</option>
-            <option value="budget-asc">Budget Low to High</option>
-            <option value="balance-desc">Balance High to Low</option>
-            <option value="name-asc">Project Name A-Z</option>
-          </select>
-        </div>
-      </div>
-
-      <div id="projectList" class="cards-grid"></div>
-    </section>
-  </main>
-
-  <template id="projectCardTemplate">
-    <article class="project-card">
-      <div class="card-top">
-        <div>
-          <div class="project-code"></div>
-          <h4 class="project-title"></h4>
-        </div>
-        <span class="status-pill"></span>
-      </div>
-
-      <div class="meta-grid">
-        <div class="meta-item">
-          <span class="meta-label">Department</span>
-          <strong class="project-department"></strong>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Category</span>
-          <strong class="project-category"></strong>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Responsible</span>
-          <strong class="project-owner"></strong>
-        </div>
-        <div class="meta-item">
-          <span class="meta-label">Priority</span>
-          <strong class="project-priority"></strong>
-        </div>
-      </div>
-
-      <div class="money-grid">
-        <div class="money-box">
-          <span>Budget</span>
-          <strong class="project-budget"></strong>
-        </div>
-        <div class="money-box warn">
-          <span>Spent</span>
-          <strong class="project-spent"></strong>
-        </div>
-        <div class="money-box success">
-          <span>Balance</span>
-          <strong class="project-balance"></strong>
-        </div>
-      </div>
-
-      <div class="date-row">
-        <span class="project-start"></span>
-        <span class="project-end"></span>
-      </div>
-
-      <p class="project-remark"></p>
-
-      <div class="card-actions">
-        <button class="btn btn-light btn-edit" type="button">Edit</button>
-        <button class="btn btn-danger btn-delete" type="button">Delete</button>
-      </div>
-    </article>
-  </template>
+  <datalist id="filterOwnerList"></datalist>
 
   <script src="script.js"></script>
 </body>

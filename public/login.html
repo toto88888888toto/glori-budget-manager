@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login</title>
+  <style>
+    body{
+      margin:0;
+      font-family:Inter,Arial,sans-serif;
+      background:#eef3fb;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-height:100vh;
+    }
+    .card{
+      width:100%;
+      max-width:360px;
+      background:#fff;
+      padding:28px;
+      border-radius:20px;
+      box-shadow:0 12px 30px rgba(15,23,42,.08);
+    }
+    h2{margin:0 0 16px;color:#1e293b}
+    input{
+      width:100%;
+      height:44px;
+      margin:0 0 12px;
+      border:1px solid #dbe4f0;
+      border-radius:12px;
+      padding:0 12px;
+      box-sizing:border-box;
+    }
+    button{
+      width:100%;
+      height:44px;
+      border:none;
+      border-radius:12px;
+      background:#2f6fed;
+      color:#fff;
+      font-weight:700;
+      cursor:pointer;
+    }
+    #err{
+      color:#dc2626;
+      margin-top:10px;
+      min-height:20px;
+      font-size:14px;
+    }
+  </style>
+</head>
+<body>
+  <form class="card" id="form">
+    <h2>Login</h2>
+    <input id="u" placeholder="Username" required />
+    <input id="p" type="password" placeholder="Password" required />
+    <button type="submit">Login</button>
+    <div id="err"></div>
+  </form>
+
+  <script>
+    const form = document.getElementById('form');
+    const u = document.getElementById('u');
+    const p = document.getElementById('p');
+    const err = document.getElementById('err');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: u.value.trim(),
+          password: p.value
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        err.textContent = data.message || 'Wrong login';
+        return;
+      }
+
+      location.href = '/';
+    });
+  </script>
+</body>
+</html>

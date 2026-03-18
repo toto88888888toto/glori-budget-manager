@@ -3,8 +3,6 @@ const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const session = require('express-session');
-const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -24,65 +22,6 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
-
-app.use(session({
-  secret: 'glori_secret_2026',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: false,
-    maxAge: 1000 * 60 * 60 * 8
-  }
-}));
-
-const USERS = [
-  {
-    username: 'bin',
-    passwordHash: '$2b$10$6nm6.uHG3zmS7/u4nliIMukMkuZYJsTpnOE2ugpwvXKRifDKbrhCS'
-  }
-];
-
-function requireAuth(req, res, next) {
-  if (req.session && req.session.user) return next();
-  return res.status(401).json({ ok: false, message: 'Unauthorized' });
-}
-
-app.post('/api/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    const user = USERS.find((u) => u.username === username);
-    if (!user) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    const matched = await bcrypt.compare(password, user.passwordHash);
-    if (!matched) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    req.session.user = { username: user.username };
-    return res.json({ ok: true, user: req.session.user });
-  } catch (error) {
-    console.error('Login error:', error);
-    return res.status(500).json({ ok: false, message: 'Login failed' });
-  }
-});
-
-app.post('/api/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.json({ ok: true });
-  });
-});
-
-app.get('/api/me', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ ok: false });
-  }
-  return res.json({ ok: true, user: req.session.user });
-});
-
 app.use(express.static(PUBLIC_DIR));
 
 const storage = multer.diskStorage({
@@ -99,101 +38,102 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024, files: 10 }
+  limits: { fileSize: 20 * 1024 * 1024, files: 20 }
 });
 
-const projectUpload = upload.fields([{ name: 'companyLogo', maxCount: 1 }]);
-const transactionUpload = upload.fields([{ name: 'billFile', maxCount: 1 }]);
+const projectUpload = upload.fields([
+  { name: 'companyLogo', maxCount: 1 },
+  { name: 'projectFiles', maxCount: 10 }
+]);
+
+const transactionUpload = upload.fields([
+  { name: 'txFiles', maxCount: 10 }
+]);
 
 const PROJECT_HEADERS = [
   'id',
-  'no',
   'projectCode',
   'projectName',
-  'category',
+  'department',
+  'budgetCategory',
   'owner',
+  'budgetAmount',
+  'status',
+  'priority',
   'startDate',
   'endDate',
   'remark',
-  'logoPath',
+  'companyLogo',
+  'projectFiles',
   'createdAt',
   'updatedAt'
 ];
 
 const TRANSACTION_HEADERS = [
   'id',
-  'no',
   'projectId',
   'type',
-  'category',
-  'description',
-  'currency',
   'amount',
   'date',
-  'billPath',
+  'vendor',
+  'referenceNo',
+  'note',
+  'files',
   'createdAt',
   'updatedAt'
 ];
 
 function toNumber(value) {
-  return Number(String(value ?? '').replace(/,/g, '').trim()) || 0;
+  return Number(String(value || '').replace(/,/g, '').trim()) || 0;
 }
 
 function normalizeDate(value) {
   if (!value) return '';
   if (typeof value === 'string') return value.slice(0, 10);
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
   return String(value).slice(0, 10);
 }
 
-function toText(value) {
-  return String(value ?? '').trim();
+function safeJsonParse(value, fallback) {
+  try {
+    if (!value) return fallback;
+    return JSON.parse(String(value));
+  } catch {
+    return fallback;
+  }
 }
 
 function publicPathFromFile(file) {
   return file ? `/uploads/${file.filename}` : '';
 }
 
+function uploadedPaths(files = []) {
+  return files.map((file) => `/uploads/${file.filename}`);
+}
+
 function removePublicFile(filePath) {
   try {
     if (!filePath || typeof filePath !== 'string' || !filePath.startsWith('/uploads/')) return;
-    const fullPath = path.join(UPLOAD_DIR, filePath.replace('/uploads/', ''));
+    const filename = filePath.replace('/uploads/', '');
+    const fullPath = path.join(UPLOAD_DIR, filename);
     if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
   } catch (error) {
     console.error('Failed deleting file', filePath, error.message);
   }
 }
 
-function styleSheet(sheet, count) {
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  sheet.columns = Array.from({ length: count }, () => ({ width: 22 }));
-  const row = sheet.getRow(1);
-  row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-  row.alignment = { vertical: 'middle', horizontal: 'center' };
-  row.fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'FF2563EB' }
-  };
-  row.height = 22;
-}
-
-function ensureHeaders(sheet, headers) {
-  if (sheet.rowCount === 0) {
-    sheet.addRow(headers);
-  } else {
-    const current = sheet.getRow(1).values.slice(1).map((value) => String(value || '').trim());
-    const matches = JSON.stringify(current) === JSON.stringify(headers);
-    if (!matches) {
-      sheet.spliceRows(1, 1);
-      sheet.insertRow(1, headers);
-    }
-  }
-  styleSheet(sheet, headers.length);
+function deleteRemovedFiles(oldList, newList) {
+  const keep = new Set(newList || []);
+  (oldList || []).forEach((filePath) => {
+    if (!keep.has(filePath)) removePublicFile(filePath);
+  });
 }
 
 async function openWorkbook() {
   const workbook = new ExcelJS.Workbook();
+
   if (fs.existsSync(EXCEL_FILE)) {
     await workbook.xlsx.readFile(EXCEL_FILE);
   }
@@ -207,24 +147,59 @@ async function openWorkbook() {
   ensureHeaders(projectSheet, PROJECT_HEADERS);
   ensureHeaders(transactionSheet, TRANSACTION_HEADERS);
 
+  styleSheet(projectSheet, PROJECT_HEADERS.length);
+  styleSheet(transactionSheet, TRANSACTION_HEADERS.length);
+
   return { workbook, projectSheet, transactionSheet };
+}
+
+function ensureHeaders(sheet, headers) {
+  const headerRow = sheet.getRow(1);
+  const current = headerRow.values.slice(1).map((value) => String(value || '').trim());
+  const matches = JSON.stringify(current) === JSON.stringify(headers);
+
+  if (sheet.rowCount === 0) {
+    sheet.addRow(headers);
+  } else if (!matches) {
+    sheet.spliceRows(1, 1);
+    sheet.insertRow(1, headers);
+  }
+}
+
+function styleSheet(sheet, count) {
+  sheet.views = [{ state: 'frozen', ySplit: 1 }];
+  sheet.columns = Array.from({ length: count }, () => ({ width: 22 }));
+
+  const row = sheet.getRow(1);
+  row.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  row.alignment = { vertical: 'middle', horizontal: 'center' };
+  row.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF2563EB' }
+  };
+  row.height = 22;
 }
 
 function rowToProject(row) {
   const values = row.values;
   return {
-    id: toText(values[1]),
-    no: toNumber(values[2]),
-    projectCode: toText(values[3]),
-    projectName: toText(values[4]),
-    category: toText(values[5]),
-    owner: toText(values[6]),
-    startDate: normalizeDate(values[7]),
-    endDate: normalizeDate(values[8]),
-    remark: toText(values[9]),
-    logoPath: toText(values[10]),
-    createdAt: toText(values[11]),
-    updatedAt: toText(values[12]),
+    id: String(values[1] || ''),
+    projectCode: String(values[2] || ''),
+    projectName: String(values[3] || ''),
+    department: String(values[4] || ''),
+    budgetCategory: String(values[5] || ''),
+    owner: String(values[6] || ''),
+    budgetAmount: toNumber(values[7]),
+    status: String(values[8] || 'Planned'),
+    priority: String(values[9] || 'Medium'),
+    startDate: normalizeDate(values[10]),
+    endDate: normalizeDate(values[11]),
+    remark: String(values[12] || ''),
+    companyLogo: String(values[13] || ''),
+    projectFiles: safeJsonParse(values[14], []),
+    createdAt: String(values[15] || ''),
+    updatedAt: String(values[16] || ''),
     _rowNumber: row.number
   };
 }
@@ -232,18 +207,17 @@ function rowToProject(row) {
 function rowToTransaction(row) {
   const values = row.values;
   return {
-    id: toText(values[1]),
-    no: toNumber(values[2]),
-    projectId: toText(values[3]),
-    type: toText(values[4]).toLowerCase(),
-    category: toText(values[5]),
-    description: toText(values[6]),
-    currency: toText(values[7]) || 'LAK',
-    amount: toNumber(values[8]),
-    date: normalizeDate(values[9]),
-    billPath: toText(values[10]),
-    createdAt: toText(values[11]),
-    updatedAt: toText(values[12]),
+    id: String(values[1] || ''),
+    projectId: String(values[2] || ''),
+    type: String(values[3] || 'bill'),
+    amount: toNumber(values[4]),
+    date: normalizeDate(values[5]),
+    vendor: String(values[6] || ''),
+    referenceNo: String(values[7] || ''),
+    note: String(values[8] || ''),
+    files: safeJsonParse(values[9], []),
+    createdAt: String(values[10] || ''),
+    updatedAt: String(values[11] || ''),
     _rowNumber: row.number
   };
 }
@@ -251,15 +225,19 @@ function rowToTransaction(row) {
 function projectToRow(project) {
   return [
     project.id,
-    toNumber(project.no),
     project.projectCode,
     project.projectName,
-    project.category,
+    project.department,
+    project.budgetCategory,
     project.owner,
+    toNumber(project.budgetAmount),
+    project.status,
+    project.priority,
     project.startDate,
     project.endDate,
     project.remark,
-    project.logoPath,
+    project.companyLogo || '',
+    JSON.stringify(project.projectFiles || []),
     project.createdAt,
     project.updatedAt
   ];
@@ -268,15 +246,14 @@ function projectToRow(project) {
 function transactionToRow(tx) {
   return [
     tx.id,
-    toNumber(tx.no),
     tx.projectId,
     tx.type,
-    tx.category,
-    tx.description,
-    tx.currency,
     toNumber(tx.amount),
     tx.date,
-    tx.billPath,
+    tx.vendor,
+    tx.referenceNo,
+    tx.note,
+    JSON.stringify(tx.files || []),
     tx.createdAt,
     tx.updatedAt
   ];
@@ -289,88 +266,17 @@ async function getAllData() {
 
   projectSheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    if (!row.getCell(1).value && !row.getCell(4).value) return;
+    if (!row.getCell(1).value && !row.getCell(2).value) return;
     projects.push(rowToProject(row));
   });
 
   transactionSheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    if (!row.getCell(1).value && !row.getCell(3).value) return;
+    if (!row.getCell(1).value && !row.getCell(2).value) return;
     transactions.push(rowToTransaction(row));
   });
 
   return { projects, transactions };
-}
-
-function nextProjectNo(projects) {
-  return projects.reduce((max, item) => Math.max(max, toNumber(item.no)), 0) + 1;
-}
-
-function nextProjectCode(projects) {
-  const max = projects.reduce((current, item) => {
-    const match = String(item.projectCode || '').match(/GB-(\d+)/i);
-    const num = match ? Number(match[1]) : 0;
-    return Math.max(current, num);
-  }, 0);
-
-  return `GB-${String(max + 1).padStart(5, '0')}`;
-}
-
-function nextTransactionNo(transactions, projectId) {
-  return transactions
-    .filter((tx) => tx.projectId === projectId)
-    .reduce((max, item) => Math.max(max, toNumber(item.no)), 0) + 1;
-}
-
-function validateProject(project) {
-  if (!project.projectName) return 'Project name is required';
-  if (!project.category) return 'Category is required';
-  return '';
-}
-
-function validateTransaction(tx) {
-  if (!tx.projectId) return 'Project is required';
-  if (!['income', 'investment', 'expense'].includes(tx.type)) return 'Type is invalid';
-  if (!tx.category) return 'Category is required';
-  if (toNumber(tx.amount) <= 0) return 'Amount must be greater than 0';
-  if (!tx.date) return 'Date is required';
-  return '';
-}
-
-function projectPayload(body, existing, req, projects) {
-  const uploadedLogo = publicPathFromFile(req.files?.companyLogo?.[0]);
-
-  return {
-    id: existing?.id || uuidv4(),
-    no: existing?.no || nextProjectNo(projects),
-    projectCode: existing?.projectCode || nextProjectCode(projects),
-    projectName: toText(body.projectName || existing?.projectName),
-    category: toText(body.category || existing?.category),
-    owner: toText(body.owner || existing?.owner),
-    startDate: normalizeDate(body.startDate || existing?.startDate),
-    endDate: normalizeDate(body.endDate || existing?.endDate),
-    remark: toText(body.remark || existing?.remark),
-    logoPath: uploadedLogo || toText(body.keepLogoPath || existing?.logoPath),
-    createdAt: existing?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function transactionPayload(projectId, body, req, transactions) {
-  return {
-    id: uuidv4(),
-    no: nextTransactionNo(transactions, projectId),
-    projectId,
-    type: toText(body.type).toLowerCase(),
-    category: toText(body.category),
-    description: toText(body.description),
-    currency: toText(body.currency || 'LAK').toUpperCase(),
-    amount: toNumber(body.amount),
-    date: normalizeDate(body.date),
-    billPath: publicPathFromFile(req.files?.billFile?.[0]),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
 }
 
 function buildProjectSummary(project, transactions) {
@@ -385,20 +291,98 @@ function buildProjectSummary(project, transactions) {
   const totals = related.reduce(
     (sum, tx) => {
       const amount = toNumber(tx.amount);
-      if (tx.type === 'income') sum.income += amount;
-      if (tx.type === 'investment') sum.investment += amount;
-      if (tx.type === 'expense') sum.expense += amount;
+      if (tx.type === 'bill') sum.bills += amount;
+      if (tx.type === 'receipt') sum.receipts += amount;
+      if (tx.type === 'payment') sum.payments += amount;
       return sum;
     },
-    { income: 0, investment: 0, expense: 0 }
+    { bills: 0, receipts: 0, payments: 0 }
   );
+
+  const spentAmount = totals.bills + totals.payments;
+  const balanceAmount = toNumber(project.budgetAmount) - spentAmount;
+  const receiptBalance = totals.receipts - spentAmount;
 
   return {
     ...project,
     transactions: related.map(({ _rowNumber, ...tx }) => tx),
     totals,
-    balance: totals.income - totals.investment - totals.expense,
+    spentAmount,
+    balanceAmount,
+    receiptBalance,
     transactionCount: related.length
+  };
+}
+
+function nextProjectCode(projects) {
+  const max = projects.reduce((current, item) => {
+    const match = String(item.projectCode || '').match(/GB-(\d+)/i);
+    const num = match ? Number(match[1]) : 0;
+    return num > current ? num : current;
+  }, 0);
+
+  return `GB-${String(max + 1).padStart(4, '0')}`;
+}
+
+function validateProject(project) {
+  if (!project.projectName) return 'Project name is required';
+  if (!project.department) return 'Department is required';
+  if (!project.budgetCategory) return 'Budget category is required';
+  if (toNumber(project.budgetAmount) < 0) return 'Budget amount must be 0 or more';
+  return '';
+}
+
+function validateTransaction(tx) {
+  if (!tx.projectId) return 'Project is required';
+  if (!tx.type) return 'Transaction type is required';
+  if (!['bill', 'receipt', 'payment'].includes(tx.type)) return 'Transaction type is invalid';
+  if (toNumber(tx.amount) <= 0) return 'Amount must be greater than 0';
+  if (!tx.date) return 'Date is required';
+  return '';
+}
+
+function projectPayload(body, existing, req, projects) {
+  const keepFiles = safeJsonParse(body.keepProjectFiles, existing?.projectFiles || []);
+  const newProjectFiles = uploadedPaths(req.files?.projectFiles || []);
+  const mergedFiles = [...keepFiles, ...newProjectFiles];
+  const uploadedLogo = publicPathFromFile(req.files?.companyLogo?.[0]);
+
+  return {
+    id: existing?.id || uuidv4(),
+    projectCode: existing?.projectCode || nextProjectCode(projects),
+    projectName: String(body.projectName || existing?.projectName || '').trim(),
+    department: String(body.department || existing?.department || '').trim(),
+    budgetCategory: String(body.budgetCategory || existing?.budgetCategory || '').trim(),
+    owner: String(body.owner || existing?.owner || '').trim(),
+    budgetAmount: toNumber(body.budgetAmount ?? existing?.budgetAmount),
+    status: String(body.status || existing?.status || 'Planned').trim() || 'Planned',
+    priority: String(body.priority || existing?.priority || 'Medium').trim() || 'Medium',
+    startDate: normalizeDate(body.startDate || existing?.startDate),
+    endDate: normalizeDate(body.endDate || existing?.endDate),
+    remark: String(body.remark || existing?.remark || '').trim(),
+    companyLogo: uploadedLogo || String(body.keepCompanyLogo || existing?.companyLogo || ''),
+    projectFiles: mergedFiles,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function transactionPayload(projectId, body, req) {
+  const keepFiles = safeJsonParse(body.keepTxFiles, []);
+  const newFiles = uploadedPaths(req.files?.txFiles || []);
+
+  return {
+    id: uuidv4(),
+    projectId,
+    type: String(body.type || '').trim().toLowerCase(),
+    amount: toNumber(body.amount),
+    date: normalizeDate(body.date),
+    vendor: String(body.vendor || '').trim(),
+    referenceNo: String(body.referenceNo || '').trim(),
+    note: String(body.note || '').trim(),
+    files: [...keepFiles, ...newFiles],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
   };
 }
 
@@ -406,12 +390,14 @@ function sendError(res, message, status = 500) {
   return res.status(status).json({ error: message });
 }
 
-app.get('/api/projects', requireAuth, async (req, res) => {
+app.get('/api/projects', async (req, res) => {
   try {
     const { projects, transactions } = await getAllData();
+
     const items = projects
       .map((project) => buildProjectSummary(project, transactions))
-      .sort((a, b) => toNumber(b.no) - toNumber(a.no));
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
     res.json(items);
   } catch (error) {
     console.error(error);
@@ -419,11 +405,13 @@ app.get('/api/projects', requireAuth, async (req, res) => {
   }
 });
 
-app.post('/api/projects', requireAuth, projectUpload, async (req, res) => {
+app.get('/api/projects/:id', async (req, res) => {
   try {
     const { projects, transactions } = await getAllData();
     const project = projects.find((item) => item.id === req.params.id);
+
     if (!project) return sendError(res, 'Project not found', 404);
+
     res.json(buildProjectSummary(project, transactions));
   } catch (error) {
     console.error(error);
@@ -434,7 +422,7 @@ app.post('/api/projects', requireAuth, projectUpload, async (req, res) => {
 app.get('/api/next-project-code', async (req, res) => {
   try {
     const { projects } = await getAllData();
-    res.json({ no: nextProjectNo(projects), projectCode: nextProjectCode(projects) });
+    res.json({ projectCode: nextProjectCode(projects) });
   } catch (error) {
     console.error(error);
     sendError(res, 'Cannot generate project code');
@@ -445,12 +433,15 @@ app.post('/api/projects', projectUpload, async (req, res) => {
   try {
     const { workbook, projectSheet } = await openWorkbook();
     const { projects, transactions } = await getAllData();
+
     const project = projectPayload(req.body, null, req, projects);
     const validation = validateProject(project);
+
     if (validation) return sendError(res, validation, 400);
 
     projectSheet.addRow(projectToRow(project));
     await workbook.xlsx.writeFile(EXCEL_FILE);
+
     res.json({ ok: true, project: buildProjectSummary(project, transactions) });
   } catch (error) {
     console.error(error);
@@ -458,26 +449,31 @@ app.post('/api/projects', projectUpload, async (req, res) => {
   }
 });
 
-app.put('/api/projects/:id', requireAuth, async (req, res) => {
+app.put('/api/projects/:id', projectUpload, async (req, res) => {
   try {
     const { workbook, projectSheet } = await openWorkbook();
     const { projects, transactions } = await getAllData();
     const existing = projects.find((item) => item.id === req.params.id);
+
     if (!existing) return sendError(res, 'Project not found', 404);
 
     const updated = projectPayload(req.body, existing, req, projects);
     const validation = validateProject(updated);
+
     if (validation) return sendError(res, validation, 400);
 
-    if (req.files?.companyLogo?.[0] && existing.logoPath && existing.logoPath !== updated.logoPath) {
-      removePublicFile(existing.logoPath);
+    if (req.files?.companyLogo?.[0] && existing.companyLogo && existing.companyLogo !== updated.companyLogo) {
+      removePublicFile(existing.companyLogo);
     }
+
+    deleteRemovedFiles(existing.projectFiles, updated.projectFiles);
 
     const row = projectSheet.getRow(existing._rowNumber);
     row.values = [null, ...projectToRow(updated)];
     row.commit();
 
     await workbook.xlsx.writeFile(EXCEL_FILE);
+
     res.json({ ok: true, project: buildProjectSummary(updated, transactions) });
   } catch (error) {
     console.error(error);
@@ -485,26 +481,25 @@ app.put('/api/projects/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/projects/:id', requireAuth, async (req, res) => {
+app.delete('/api/projects/:id', async (req, res) => {
   try {
     const { workbook, projectSheet, transactionSheet } = await openWorkbook();
     const { projects, transactions } = await getAllData();
     const existing = projects.find((item) => item.id === req.params.id);
+
     if (!existing) return sendError(res, 'Project not found', 404);
 
-    if (existing.logoPath) removePublicFile(existing.logoPath);
+    if (existing.companyLogo) removePublicFile(existing.companyLogo);
+    (existing.projectFiles || []).forEach(removePublicFile);
 
     const related = transactions.filter((tx) => tx.projectId === existing.id);
-    related.forEach((tx) => {
-      if (tx.billPath) removePublicFile(tx.billPath);
-    });
+    related.forEach((tx) => (tx.files || []).forEach(removePublicFile));
 
-    related
-      .map((tx) => tx._rowNumber)
-      .sort((a, b) => b - a)
-      .forEach((rowNumber) => transactionSheet.spliceRows(rowNumber, 1));
+    const txRows = related.map((tx) => tx._rowNumber).sort((a, b) => b - a);
+    txRows.forEach((rowNumber) => transactionSheet.spliceRows(rowNumber, 1));
 
     projectSheet.spliceRows(existing._rowNumber, 1);
+
     await workbook.xlsx.writeFile(EXCEL_FILE);
     res.json({ ok: true });
   } catch (error) {
@@ -518,19 +513,22 @@ app.post('/api/projects/:id/transactions', transactionUpload, async (req, res) =
     const { workbook, transactionSheet } = await openWorkbook();
     const { projects, transactions } = await getAllData();
     const project = projects.find((item) => item.id === req.params.id);
+
     if (!project) return sendError(res, 'Project not found', 404);
 
-    const tx = transactionPayload(project.id, req.body, req, transactions);
+    const tx = transactionPayload(project.id, req.body, req);
     const validation = validateTransaction(tx);
+
     if (validation) return sendError(res, validation, 400);
 
     transactionSheet.addRow(transactionToRow(tx));
     await workbook.xlsx.writeFile(EXCEL_FILE);
 
-    res.json({ ok: true, transaction: tx, project: buildProjectSummary(project, [...transactions, tx]) });
+    const freshSummary = buildProjectSummary(project, [...transactions, tx]);
+    res.json({ ok: true, transaction: tx, project: freshSummary });
   } catch (error) {
-    console.error(error);
-    sendError(res, 'Cannot save transaction');
+    console.error('SAVE TRANSACTION ERROR:', error);
+    sendError(res, error.message || 'Cannot save transaction');
   }
 });
 
@@ -539,10 +537,12 @@ app.delete('/api/transactions/:id', async (req, res) => {
     const { workbook, transactionSheet } = await openWorkbook();
     const { transactions } = await getAllData();
     const tx = transactions.find((item) => item.id === req.params.id);
+
     if (!tx) return sendError(res, 'Transaction not found', 404);
 
-    if (tx.billPath) removePublicFile(tx.billPath);
+    (tx.files || []).forEach(removePublicFile);
     transactionSheet.spliceRows(tx._rowNumber, 1);
+
     await workbook.xlsx.writeFile(EXCEL_FILE);
     res.json({ ok: true });
   } catch (error) {
