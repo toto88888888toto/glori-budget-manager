@@ -26,23 +26,25 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(UPLOAD_DIR));
+app.use(express.static(PUBLIC_DIR));
 
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'glori_secret_2026',
     resave: false,
     saveUninitialized: false,
+    rolling: true,
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: true,
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 8
     }
   })
 );
 
-// Request log
+// request log
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), req.method, req.url);
   next();
@@ -56,8 +58,18 @@ const USERS = [
   }
 ];
 
+function isPageRequest(req) {
+  const accept = String(req.headers.accept || '');
+  return accept.includes('text/html');
+}
+
 function requireAuth(req, res, next) {
   if (req.session && req.session.user) return next();
+
+  if (isPageRequest(req)) {
+    return res.redirect('/login.html');
+  }
+
   return res.status(401).json({ ok: false, message: 'Unauthorized' });
 }
 
@@ -81,7 +93,14 @@ app.post('/api/login', async (req, res) => {
     }
 
     req.session.user = { username: user.username };
-    return res.json({ ok: true, user: req.session.user });
+
+    return req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+        return res.status(500).json({ ok: false, message: 'Login failed' });
+      }
+      return res.json({ ok: true, user: req.session.user });
+    });
   } catch (error) {
     console.error('Login error:', error);
     return res.status(500).json({ ok: false, message: 'Login failed' });
@@ -89,9 +108,19 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/logout', requireAuth, (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie('connect.sid');
-    res.json({ ok: true });
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).json({ ok: false, message: 'Logout failed' });
+    }
+
+    res.clearCookie('connect.sid', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax'
+    });
+
+    return res.json({ ok: true });
   });
 });
 
@@ -109,8 +138,6 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
-app.use(express.static(PUBLIC_DIR));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -213,11 +240,7 @@ function ensureHeaders(sheet, headers) {
   if (sheet.rowCount === 0) {
     sheet.addRow(headers);
   } else {
-    const current = sheet
-      .getRow(1)
-      .values.slice(1)
-      .map((value) => String(value || '').trim());
-
+    const current = sheet.getRow(1).values.slice(1).map((v) => String(v || '').trim());
     const matches = JSON.stringify(current) === JSON.stringify(headers);
 
     if (!matches) {
@@ -481,18 +504,26 @@ function sendError(res, message, status = 500) {
   return res.status(status).json({ ok: false, error: message });
 }
 
+// page routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
-});
-
-app.get('/index.html', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  if (req.session?.user) {
+    return res.redirect('/index.html');
+  }
+  return res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
 });
 
 app.get('/login.html', (req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
+  if (req.session?.user) {
+    return res.redirect('/index.html');
+  }
+  return res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
 });
 
+app.get('/index.html', requireAuth, (req, res) => {
+  return res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
+// api routes
 app.get('/api/projects', requireAuth, async (req, res) => {
   const started = Date.now();
   try {
@@ -502,10 +533,10 @@ app.get('/api/projects', requireAuth, async (req, res) => {
       .sort((a, b) => toNumber(b.no) - toNumber(a.no));
 
     console.log('/api/projects took', Date.now() - started, 'ms');
-    res.json(items);
+    return res.json(items);
   } catch (error) {
     console.error('Cannot read projects:', error);
-    sendError(res, 'Cannot read projects');
+    return sendError(res, 'Cannot read projects');
   }
 });
 
@@ -517,23 +548,23 @@ app.get('/api/projects/:id', requireAuth, async (req, res) => {
     if (!project) return sendError(res, 'Project not found', 404);
 
     console.log('/api/projects/:id took', Date.now() - started, 'ms');
-    res.json(buildProjectSummary(project, transactions));
+    return res.json(buildProjectSummary(project, transactions));
   } catch (error) {
     console.error('Cannot read project:', error);
-    sendError(res, 'Cannot read project');
+    return sendError(res, 'Cannot read project');
   }
 });
 
 app.get('/api/next-project-code', requireAuth, async (req, res) => {
   try {
     const { projects } = await getAllData();
-    res.json({
+    return res.json({
       no: nextProjectNo(projects),
       projectCode: nextProjectCode(projects)
     });
   } catch (error) {
     console.error('Cannot generate project code:', error);
-    sendError(res, 'Cannot generate project code');
+    return sendError(res, 'Cannot generate project code');
   }
 });
 
@@ -558,10 +589,10 @@ app.post('/api/projects', requireAuth, projectUpload, async (req, res) => {
       };
     });
 
-    res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Cannot save project:', error);
-    sendError(res, 'Cannot save project');
+    return sendError(res, 'Cannot save project');
   }
 });
 
@@ -598,10 +629,10 @@ app.put('/api/projects/:id', requireAuth, projectUpload, async (req, res) => {
       };
     });
 
-    res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Cannot update project:', error);
-    sendError(res, 'Cannot update project');
+    return sendError(res, 'Cannot update project');
   }
 });
 
@@ -634,10 +665,10 @@ app.delete('/api/projects/:id', requireAuth, async (req, res) => {
       return { status: 200, body: { ok: true } };
     });
 
-    res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Cannot delete project:', error);
-    sendError(res, 'Cannot delete project');
+    return sendError(res, 'Cannot delete project');
   }
 });
 
@@ -671,10 +702,10 @@ app.post('/api/projects/:id/transactions', requireAuth, transactionUpload, async
       };
     });
 
-    res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Cannot save transaction:', error);
-    sendError(res, 'Cannot save transaction');
+    return sendError(res, 'Cannot save transaction');
   }
 });
 
@@ -696,10 +727,10 @@ app.delete('/api/transactions/:id', requireAuth, async (req, res) => {
       return { status: 200, body: { ok: true } };
     });
 
-    res.status(result.status).json(result.body);
+    return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Cannot delete transaction:', error);
-    sendError(res, 'Cannot delete transaction');
+    return sendError(res, 'Cannot delete transaction');
   }
 });
 
@@ -712,21 +743,24 @@ app.get('/api/download-excel', requireAuth, async (req, res) => {
       });
     }
 
-    res.download(EXCEL_FILE, 'glori-budget.xlsx');
+    return res.download(EXCEL_FILE, 'glori-budget.xlsx');
   } catch (error) {
     console.error('Cannot download Excel:', error);
-    sendError(res, 'Cannot download Excel');
+    return sendError(res, 'Cannot download Excel');
   }
 });
 
-// 404 for unknown API routes
+// unknown api routes
 app.use('/api', (req, res) => {
-  res.status(404).json({ ok: false, error: 'API route not found' });
+  return res.status(404).json({ ok: false, error: 'API route not found' });
 });
 
-// 404 for other unknown routes
+// unknown page routes
 app.use((req, res) => {
-  res.status(404).send('Page not found');
+  if (isPageRequest(req)) {
+    return res.redirect('/');
+  }
+  return res.status(404).send('Page not found');
 });
 
 app.listen(PORT, () => {
