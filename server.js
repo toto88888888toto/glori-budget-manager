@@ -8,7 +8,7 @@ const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 const ROOT_DIR = __dirname;
@@ -30,8 +30,19 @@ app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(UPLOAD_DIR));
-app.use(express.static(PUBLIC_DIR));
+
+app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+app.use(
+  express.static(PUBLIC_DIR, {
+    extensions: ['html'],
+    maxAge: IS_PROD ? '1h' : 0,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    }
+  })
+);
 
 app.use(
   session({
@@ -52,7 +63,7 @@ app.use(
 
 app.use((req, res, next) => {
   console.log(
-    `[${new Date().toISOString()}] ${req.method} ${req.url} | secure=${req.secure} | xfwd=${
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} | ip=${req.ip} | secure=${req.secure} | xfwd=${
       req.headers['x-forwarded-proto'] || '-'
     }`
   );
@@ -73,7 +84,7 @@ function isPageRequest(req) {
 }
 
 function requireAuth(req, res, next) {
-  if (req.session?.user) return next();
+  if (req.session && req.session.user) return next();
 
   if (isPageRequest(req)) {
     return res.redirect('/login.html');
@@ -452,14 +463,23 @@ function buildProjectSummary(project, transactions) {
   };
 }
 
-app.get('/api/health', (req, res) => {
-  res.json({
-    ok: true,
-    app: 'Glori Budget Manager',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'development'
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    const excelExists = fs.existsSync(EXCEL_FILE);
+    return res.status(200).json({
+      ok: true,
+      app: 'Glori Budget Manager',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || 'development',
+      excelExists
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -765,6 +785,14 @@ app.use((req, res) => {
     return res.redirect('/');
   }
   return res.status(404).send('Page not found');
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
