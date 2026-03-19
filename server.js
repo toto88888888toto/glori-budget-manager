@@ -31,19 +31,6 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
-app.use(
-  express.static(PUBLIC_DIR, {
-    extensions: ['html'],
-    maxAge: IS_PROD ? '1h' : 0,
-    setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html')) {
-        res.setHeader('Cache-Control', 'no-store');
-      }
-    }
-  })
-);
-
 app.use(
   session({
     name: 'glori.sid',
@@ -54,12 +41,20 @@ app.use(
     proxy: true,
     cookie: {
       httpOnly: true,
-      secure: IS_PROD,
+      secure: 'auto',
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 8
     }
   })
 );
+
+// public files
+app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
+app.use('/style.css', express.static(path.join(PUBLIC_DIR, 'style.css')));
+app.use('/script.js', express.static(path.join(PUBLIC_DIR, 'script.js')));
+
+// if you have logo/images in public/images, keep this too
+app.use('/images', express.static(path.join(PUBLIC_DIR, 'images')));
 
 app.use((req, res, next) => {
   console.log(
@@ -92,6 +87,68 @@ function requireAuth(req, res, next) {
 
   return res.status(401).json({ ok: false, message: 'Unauthorized' });
 }
+
+app.get('/', (req, res) => {
+  if (req.session?.user) {
+    return res.redirect('/index.html');
+  }
+  return res.sendFile(LOGIN_HTML);
+});
+
+app.get('/login.html', (req, res) => {
+  if (req.session?.user) {
+    return res.redirect('/index.html');
+  }
+  return res.sendFile(LOGIN_HTML);
+});
+
+app.get('/index.html', requireAuth, (req, res) => {
+  return res.sendFile(INDEX_HTML);
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const username = String(req.body.username || '').trim();
+    const password = String(req.body.password || '');
+
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, message: 'Username and password are required' });
+    }
+
+    const user = USERS.find((u) => u.username === username);
+    if (!user) {
+      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+    }
+
+    const matched = await bcrypt.compare(password, user.passwordHash);
+    if (!matched) {
+      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
+    }
+
+    req.session.user = { username: user.username };
+
+    req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+        return res.status(500).json({ ok: false, message: 'Login failed' });
+      }
+      return res.json({ ok: true, username: user.username });
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ ok: false, message: 'Login failed' });
+  }
+});
+
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie('glori.sid', {
+      httpOnly: true,
+      sameSite: 'lax'
+    });
+    return res.json({ ok: true });
+  });
+});
 
 function sendError(res, message, status = 500) {
   return res.status(status).json({ ok: false, error: message });
