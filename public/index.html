@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Glori Budget Manager</title>
+  <title>Glori Budget Manager test</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -21,7 +21,7 @@
           <img src="/images/Logo.png" alt="Glori Budget Manager Logo" class="brand-logo" />
         </div>
         <div>
-          <h1>Glori Budget Manager</h1>
+          <h1>Glori Budget Manager test</h1>
           <p class="brand-sub">Project first, then add income / investment / expense</p>
         </div>
       </div>
@@ -29,6 +29,7 @@
       <div class="top-actions">
         <button class="btn btn-light" id="downloadExcelBtn" type="button">Download Excel</button>
         <button class="btn btn-light" id="refreshBtn" type="button">Refresh</button>
+        <button class="btn btn-light" id="logoutBtn" type="button">Logout</button>
       </div>
     </div>
   </header>
@@ -40,8 +41,8 @@
           <p class="eyebrow">Backend First Workflow</p>
           <h2>Create each project once, then keep adding transactions under that project.</h2>
           <p>
-            This version matches your Excel exactly. Project data is stored in the
-            <strong>Projects</strong> sheet and money movement is stored in the
+            This version stores project info in the
+            <strong>Projects</strong> sheet and money movement in the
             <strong>Transactions</strong> sheet.
           </p>
         </div>
@@ -136,6 +137,50 @@
                   <input id="endDate" name="endDate" type="date" />
                 </div>
 
+                <div class="field">
+                  <label for="contractCurrency">Contract Currency</label>
+                  <select id="contractCurrency" name="contractCurrency">
+                    <option value="LAK">LAK</option>
+                    <option value="THB">THB</option>
+                    <option value="USD">USD</option>
+                    <option value="CNY">CNY</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="totalPrice">Total Price</label>
+                  <input
+                    id="totalPrice"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0"
+                  />
+                  <input type="hidden" id="totalPriceRaw" name="totalPrice" />
+                </div>
+
+                <div class="field">
+                  <label for="vatPercent">VAT %</label>
+                  <input
+                    id="vatPercent"
+                    name="vatPercent"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="10"
+                    value="10"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="totalPriceWithVatDisplay">Total Price + VAT</label>
+                  <input
+                    id="totalPriceWithVatDisplay"
+                    type="text"
+                    readonly
+                    placeholder="Auto calculate"
+                  />
+                </div>
+
                 <div class="field full">
                   <label for="remark">Remark</label>
                   <textarea
@@ -210,27 +255,139 @@
                   <option value="oldest">Oldest</option>
                   <option value="name">Project Name</option>
                   <option value="code">Project Code</option>
+                  <option value="profitHigh">Profit High to Low</option>
+                  <option value="profitLow">Profit Low to High</option>
                 </select>
               </div>
             </div>
 
             <div id="projectList" class="cards-grid"></div>
           </div>
-
-          <div class="bottom-grid single">
-            <div class="card detail-card hidden" id="detailCard">
-              <div class="section-head">
-                <h3>Project Detail</h3>
-                <p>Selected project summary and transaction history.</p>
-              </div>
-              <div id="projectDetail"></div>
-            </div>
-          </div>
         </section>
       </section>
     </div>
   </main>
 
+  <!-- PROJECT DETAIL MODAL -->
+  <div id="projectModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" id="projectModalBackdrop"></div>
+
+    <div class="modal-dialog modal-lg" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+      <div class="modal-header">
+        <div>
+          <h3 id="projectModalTitle">Project Detail</h3>
+          <p id="projectModalSub">Project summary and transaction history.</p>
+        </div>
+        <button type="button" class="modal-close" id="closeProjectModal" aria-label="Close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="project-detail-wrap">
+          <div class="project-detail-top">
+            <div class="project-detail-main">
+              <div class="project-detail-logo" id="projectDetailLogoWrap">
+                <div class="logo-preview empty small" id="projectDetailLogo">No logo</div>
+              </div>
+
+              <div class="project-detail-info">
+                <div class="project-badges">
+                  <span class="badge" id="detailProjectCode">GB-00000</span>
+                  <span class="badge soft" id="detailProjectCategory">Category</span>
+                  <span class="badge soft" id="detailProjectOwner">Owner</span>
+                </div>
+
+                <h2 id="detailProjectName">Project Name</h2>
+                <p class="muted" id="detailProjectRemark">No remark</p>
+
+                <div class="detail-meta-grid">
+                  <div class="meta-item">
+                    <span class="meta-label">Start Date</span>
+                    <strong id="detailStartDate">-</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">End Date</span>
+                    <strong id="detailEndDate">-</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Contract Currency</span>
+                    <strong id="detailCurrency">LAK</strong>
+                  </div>
+                  <div class="meta-item">
+                    <span class="meta-label">Transactions</span>
+                    <strong id="detailTransactionCount">0</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="project-detail-actions">
+              <button class="btn btn-light" type="button" id="editProjectBtn">Edit Project</button>
+              <button class="btn btn-primary" type="button" id="openAddTxFromDetailBtn">Add Transaction</button>
+              <button class="btn btn-danger" type="button" id="deleteProjectBtn">Delete</button>
+            </div>
+          </div>
+
+          <div class="project-finance-grid">
+            <div class="finance-box">
+              <span class="meta-label">Total Price</span>
+              <strong id="detailTotalPrice">0</strong>
+            </div>
+            <div class="finance-box">
+              <span class="meta-label">VAT %</span>
+              <strong id="detailVatPercent">0%</strong>
+            </div>
+            <div class="finance-box">
+              <span class="meta-label">Total Price + VAT</span>
+              <strong id="detailTotalWithVat">0</strong>
+            </div>
+            <div class="finance-box">
+              <span class="meta-label">Actual Cost</span>
+              <strong id="detailActualCost">0</strong>
+            </div>
+            <div class="finance-box highlight">
+              <span class="meta-label">Estimated Profit</span>
+              <strong id="detailEstimatedProfit">0</strong>
+            </div>
+            <div class="finance-box">
+              <span class="meta-label">Balance</span>
+              <strong id="detailBalance">0</strong>
+            </div>
+          </div>
+
+          <div class="project-finance-grid small-kpis">
+            <div class="finance-box income">
+              <span class="meta-label">Income</span>
+              <strong id="detailIncome">0</strong>
+            </div>
+            <div class="finance-box investment">
+              <span class="meta-label">Investment</span>
+              <strong id="detailInvestment">0</strong>
+            </div>
+            <div class="finance-box expense">
+              <span class="meta-label">Expense</span>
+              <strong id="detailExpense">0</strong>
+            </div>
+          </div>
+
+          <div class="modal-history-wrap">
+            <div class="section-head modal-history-head">
+              <h3>Transaction History</h3>
+              <p id="detailHistoryCount">0 item(s)</p>
+            </div>
+
+            <div id="projectModalHistory" class="history-list">
+              <div class="empty-state small">
+                <h3>No transactions yet</h3>
+                <p>Add the first transaction for this project.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRANSACTION MODAL -->
   <div id="txModal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" id="txModalBackdrop"></div>
 
@@ -323,6 +480,20 @@
         <div class="form-actions">
           <button class="btn btn-primary" id="addTxBtn" type="submit">Add Transaction</button>
           <button class="btn btn-light" id="clearTxBtn" type="button">Clear</button>
+        </div>
+
+        <div class="modal-history-wrap">
+          <div class="section-head modal-history-head">
+            <h3>Transaction History</h3>
+            <p id="txHistoryCount">0 item(s)</p>
+          </div>
+
+          <div id="txModalHistory" class="history-list">
+            <div class="empty-state small">
+              <h3>No transactions yet</h3>
+              <p>Add the first transaction for this project.</p>
+            </div>
+          </div>
         </div>
       </form>
     </div>

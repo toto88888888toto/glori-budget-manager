@@ -48,12 +48,9 @@ app.use(
   })
 );
 
-// public files
 app.use('/uploads', express.static(UPLOAD_DIR, { maxAge: '7d' }));
 app.use('/style.css', express.static(path.join(PUBLIC_DIR, 'style.css')));
 app.use('/script.js', express.static(path.join(PUBLIC_DIR, 'script.js')));
-
-// if you have logo/images in public/images, keep this too
 app.use('/images', express.static(path.join(PUBLIC_DIR, 'images')));
 
 app.use((req, res, next) => {
@@ -87,68 +84,6 @@ function requireAuth(req, res, next) {
 
   return res.status(401).json({ ok: false, message: 'Unauthorized' });
 }
-
-app.get('/', (req, res) => {
-  if (req.session?.user) {
-    return res.redirect('/index.html');
-  }
-  return res.sendFile(LOGIN_HTML);
-});
-
-app.get('/login.html', (req, res) => {
-  if (req.session?.user) {
-    return res.redirect('/index.html');
-  }
-  return res.sendFile(LOGIN_HTML);
-});
-
-app.get('/index.html', requireAuth, (req, res) => {
-  return res.sendFile(INDEX_HTML);
-});
-
-app.post('/api/login', async (req, res) => {
-  try {
-    const username = String(req.body.username || '').trim();
-    const password = String(req.body.password || '');
-
-    if (!username || !password) {
-      return res.status(400).json({ ok: false, message: 'Username and password are required' });
-    }
-
-    const user = USERS.find((u) => u.username === username);
-    if (!user) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    const matched = await bcrypt.compare(password, user.passwordHash);
-    if (!matched) {
-      return res.status(401).json({ ok: false, message: 'Invalid username or password' });
-    }
-
-    req.session.user = { username: user.username };
-
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        return res.status(500).json({ ok: false, message: 'Login failed' });
-      }
-      return res.json({ ok: true, username: user.username });
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ ok: false, message: 'Login failed' });
-  }
-});
-
-app.post('/api/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie('glori.sid', {
-      httpOnly: true,
-      sameSite: 'lax'
-    });
-    return res.json({ ok: true });
-  });
-});
 
 function sendError(res, message, status = 500) {
   return res.status(status).json({ ok: false, error: message });
@@ -253,6 +188,10 @@ const PROJECT_HEADERS = [
   'endDate',
   'remark',
   'logoPath',
+  'contractCurrency',
+  'totalPrice',
+  'vatPercent',
+  'totalPriceWithVat',
   'createdAt',
   'updatedAt'
 ];
@@ -339,8 +278,12 @@ function rowToProject(row) {
     endDate: normalizeDate(values[8]),
     remark: toText(values[9]),
     logoPath: toText(values[10]),
-    createdAt: toText(values[11]),
-    updatedAt: toText(values[12]),
+    contractCurrency: toText(values[11]) || 'LAK',
+    totalPrice: toNumber(values[12]),
+    vatPercent: toNumber(values[13]),
+    totalPriceWithVat: toNumber(values[14]),
+    createdAt: toText(values[15]),
+    updatedAt: toText(values[16]),
     _rowNumber: row.number
   };
 }
@@ -376,6 +319,10 @@ function projectToRow(project) {
     project.endDate,
     project.remark,
     project.logoPath,
+    project.contractCurrency,
+    toNumber(project.totalPrice),
+    toNumber(project.vatPercent),
+    toNumber(project.totalPriceWithVat),
     project.createdAt,
     project.updatedAt
   ];
@@ -455,8 +402,31 @@ function validateTransaction(tx) {
   return '';
 }
 
+function calcTotalWithVat(totalPrice, vatPercent) {
+  const total = toNumber(totalPrice);
+  const vat = toNumber(vatPercent);
+  return total + (total * vat) / 100;
+}
+
+function calcActualCost(transactions) {
+  return transactions.reduce((sum, tx) => {
+    if (tx.type === 'investment' || tx.type === 'expense') {
+      sum += toNumber(tx.amount);
+    }
+    return sum;
+  }, 0);
+}
+
+function calcEstimatedProfit(totalPriceWithVat, actualCost) {
+  return toNumber(totalPriceWithVat) - toNumber(actualCost);
+}
+
 function projectPayload(body, existing, req, projects) {
   const uploadedLogo = publicPathFromFile(req.files?.companyLogo?.[0]);
+
+  const totalPrice = toNumber(body.totalPrice ?? existing?.totalPrice);
+  const vatPercent = toNumber(body.vatPercent ?? existing?.vatPercent);
+  const totalPriceWithVat = calcTotalWithVat(totalPrice, vatPercent);
 
   return {
     id: existing?.id || uuidv4(),
@@ -469,6 +439,10 @@ function projectPayload(body, existing, req, projects) {
     endDate: normalizeDate(body.endDate || existing?.endDate),
     remark: toText(body.remark || existing?.remark),
     logoPath: uploadedLogo || toText(body.keepLogoPath || existing?.logoPath),
+    contractCurrency: toText(body.contractCurrency || existing?.contractCurrency || 'LAK').toUpperCase(),
+    totalPrice,
+    vatPercent,
+    totalPriceWithVat,
     createdAt: existing?.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -511,38 +485,46 @@ function buildProjectSummary(project, transactions) {
     { income: 0, investment: 0, expense: 0 }
   );
 
+  const actualCost = calcActualCost(related);
+  const estimatedProfit = calcEstimatedProfit(project.totalPriceWithVat, actualCost);
+
   return {
     ...project,
     transactions: related.map(({ _rowNumber, ...tx }) => tx),
     totals,
+    actualCost,
+    estimatedProfit,
     balance: totals.income - totals.investment - totals.expense,
     transactionCount: related.length
   };
 }
 
-app.get('/api/health', async (req, res) => {
-  try {
-    const excelExists = fs.existsSync(EXCEL_FILE);
-    return res.status(200).json({
-      ok: true,
-      app: 'Glori Budget Manager',
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV || 'development',
-      excelExists
-    });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      error: error.message
-    });
+app.get('/', (req, res) => {
+  if (req.session?.user) {
+    return res.redirect('/index.html');
   }
+  return res.sendFile(LOGIN_HTML);
+});
+
+app.get('/login.html', (req, res) => {
+  if (req.session?.user) {
+    return res.redirect('/index.html');
+  }
+  return res.sendFile(LOGIN_HTML);
+});
+
+app.get('/index.html', requireAuth, (req, res) => {
+  return res.sendFile(INDEX_HTML);
 });
 
 app.post('/api/login', async (req, res) => {
   try {
     const username = String(req.body.username || '').trim();
     const password = String(req.body.password || '');
+
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, message: 'Username and password are required' });
+    }
 
     const user = USERS.find((u) => u.username === username);
     if (!user) {
@@ -593,22 +575,23 @@ app.get('/api/me', (req, res) => {
   return res.json({ ok: true, user: req.session.user });
 });
 
-app.get('/', (req, res) => {
-  if (req.session?.user) {
-    return res.redirect('/index.html');
+app.get('/api/health', async (req, res) => {
+  try {
+    const excelExists = fs.existsSync(EXCEL_FILE);
+    return res.status(200).json({
+      ok: true,
+      app: 'Glori Budget Manager',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV || 'development',
+      excelExists
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error.message
+    });
   }
-  return res.sendFile(LOGIN_HTML);
-});
-
-app.get('/login.html', (req, res) => {
-  if (req.session?.user) {
-    return res.redirect('/index.html');
-  }
-  return res.sendFile(LOGIN_HTML);
-});
-
-app.get('/index.html', requireAuth, (req, res) => {
-  return res.sendFile(INDEX_HTML);
 });
 
 app.get('/api/projects', requireAuth, async (req, res) => {
